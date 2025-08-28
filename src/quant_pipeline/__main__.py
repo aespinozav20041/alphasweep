@@ -10,6 +10,10 @@ from .ingest import ingest_ohlcv_ccxt
 from .logging import get_logger
 from .settings import settings
 from .storage import LAKE_PATH
+=======
+from .logging import get_logger
+from .settings import settings
+
 
 logger = get_logger(__name__)
 
@@ -24,6 +28,7 @@ def info():
     """Display current settings."""
 
     click.echo(f"Environment: {settings.env_name}")
+
 
 
 @cli.command("ingest-ohlcv")
@@ -51,6 +56,7 @@ def ingest_ohlcv_cmd(exchange, symbols, timeframe, since, until, out):
         until=until_ms,
         out=Path(out),
     )
+
 
 
 if __name__ == "__main__":
