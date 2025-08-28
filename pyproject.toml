@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quant-pipeline"
+version = "0.1.0"
+description = "Quantitative research pipeline"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "pandas",
+    "numpy",
+    "pyarrow",
+    "fastparquet",
+    "numba",
+    "ccxt",
+    "pydantic<2",
+    "click",
+    "tqdm",
+    "sqlalchemy",
+    "python-dotenv",
+    "requests",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
