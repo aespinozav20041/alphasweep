@@ -7,10 +7,20 @@ from pathlib import Path
 import pandas as pd
 
 from .ingest import ingest_ohlcv_ccxt
+
 from .quality import doctor_ohlcv
 from .logging import get_logger
 from .settings import settings
 from .storage import LAKE_PATH
+=======
+from .logging import get_logger
+from .settings import settings
+from .storage import LAKE_PATH
+=======
+from .logging import get_logger
+from .settings import settings
+
+
 
 logger = get_logger(__name__)
 
@@ -25,6 +35,10 @@ def info():
     """Display current settings."""
 
     click.echo(f"Environment: {settings.env_name}")
+
+
+
+=======
 
 
 @cli.command("ingest-ohlcv")
@@ -54,6 +68,7 @@ def ingest_ohlcv_cmd(exchange, symbols, timeframe, since, until, out):
     )
 
 
+
 @cli.command("doctor-ohlcv")
 @click.option("--symbol", required=True, type=str)
 @click.option("--timeframe", required=True, type=str)
@@ -75,6 +90,7 @@ def doctor_ohlcv_cmd(symbol, timeframe, start, end, gap_threshold, lake, runs):
         lake_path=Path(lake),
         runs_path=Path(runs),
     )
+
 
 
 if __name__ == "__main__":
