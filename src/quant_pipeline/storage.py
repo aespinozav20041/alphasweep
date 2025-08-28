@@ -14,8 +14,13 @@ LAKE_PATH = Path(__file__).resolve().parents[2] / "lake"
 SCHEMAS = {
 
     "ohlcv": BarOHLCV,
+    "ohlcv_clean": BarOHLCV,
+=======
+
+    "ohlcv": BarOHLCV,
 =======
     "bar_ohlcv": BarOHLCV,
+
 
     "orderbook_best": OrderBookBest,
     "perp_metrics": PerpMetrics,
