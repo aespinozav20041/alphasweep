@@ -33,9 +33,9 @@ class TradingEngine:
     # ------------------------------------------------------------------
     def on_bar(self, market_data: Any) -> Optional[str]:
         """Process one market data event and optionally send an order."""
-
-        features = self.feature_builder(market_data)
-        signal = float(self.model.predict(features))
+        bar = self.feature_builder(market_data)
+        symbol = getattr(market_data, "symbol", "")
+        signal = float(self.model.predict(bar, symbol=symbol))
         qty = self.size_fn(signal)
         if qty == 0:
             return None
@@ -50,8 +50,10 @@ class TradingEngine:
         )
         if not self.risk_manager.pre_trade(order, self.execution_client.positions()):
             return None
+        order = self.risk_manager.limit_order(order)
         order_id = self.execution_client.send(order)
-        self.risk_manager.post_trade(order, self.execution_client.positions())
+        atr = getattr(market_data, "atr", None)
+        self.risk_manager.post_trade(order, self.execution_client.positions(), atr=atr)
         return order_id
 
     # Convenience aliases ------------------------------------------------

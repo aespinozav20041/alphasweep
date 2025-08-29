@@ -16,7 +16,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
+=======
+from datetime import datetime, timezone, timedelta
+from typing import Dict, List, Optional, Set, Callable
 import uuid
+import threading
+import time
 
 
 # ---------------------------------------------------------------------------
@@ -177,24 +182,107 @@ class SimExecutionClient(ExecutionClient):
 
 
 class BrokerExecutionClient(ExecutionClient):
-    """Placeholder implementation for live trading.
+    """Simple live-trading client with basic resiliency features.
 
-    In a production system this class would wrap a library such as CCXT,
-    IBKR, or a broker SDK.  The methods currently log their usage making
-    it easy to later plug in the real API calls.
+    The implementation is intentionally lightweight, logging its actions
+    instead of performing real network requests.  Nevertheless it models
+    behaviours typically found in production clients such as periodic
+    heartbeats, cancel-on-disconnect and retry logic with exponential
+    backoff.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        heartbeat_interval: int = 30,
+        timeout: int = 10,
+        max_retries: int = 3,
+        kill_switch: bool = False,
+    ):
         self._positions: Dict[str, float] = {}
+        self._open_orders: Set[str] = set()
+        self._kill_switch_enabled = kill_switch
+        self._killed = False
+        self._heartbeat_interval = heartbeat_interval
+        self._timeout = timeout
+        self._max_retries = max_retries
+        self._last_ack = datetime.now(timezone.utc)
+        self._stop = threading.Event()
+        self._hb_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+        self._hb_thread.start()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+    def _with_retries(self, fn: Callable, *a, **k):
+        delay = 0.5
+        for attempt in range(1, self._max_retries + 1):
+            try:
+                return fn(*a, **k)
+            except Exception:  # pragma: no cover - network failure stub
+                if attempt == self._max_retries:
+                    raise
+                time.sleep(delay)
+                delay *= 2
+
+    def _record_ack(self) -> None:
+        self._last_ack = datetime.now(timezone.utc)
+
+    def _send_heartbeat(self) -> None:
+        print("HEARTBEAT")
+
+    def _heartbeat_loop(self) -> None:
+        while not self._stop.wait(self._heartbeat_interval):
+            if datetime.now(timezone.utc) - self._last_ack > timedelta(seconds=self._timeout):
+                self._on_disconnect()
+                continue
+            try:
+                self._with_retries(self._send_heartbeat)
+                self._record_ack()
+            except Exception:
+                pass
+
+    def _on_disconnect(self) -> None:
+        for oid in list(self._open_orders):
+            try:
+                self.cancel(oid)
+            except Exception:
+                pass
+        self._open_orders.clear()
+        if self._kill_switch_enabled:
+            self._killed = True
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+    def close(self) -> None:
+        """Stop the heartbeat thread."""
+
+        self._stop.set()
+        self._hb_thread.join(timeout=1)
 
     def send(self, order: Order) -> str:  # pragma: no cover - stub
-        # Replace the print statements with real broker API calls.
-        print(f"LIVE ORDER -> {order.symbol} {order.qty}@{order.price}")
+        if self._killed:
+            raise RuntimeError("kill switch activated")
+
+        def _do_send() -> None:
+            print(f"LIVE ORDER -> {order.symbol} {order.qty}@{order.price}")
+
+        self._with_retries(_do_send)
         self._positions[order.symbol] = self._positions.get(order.symbol, 0.0) + order.qty
+        self._open_orders.add(order.id)
+        self._record_ack()
         return order.id
 
     def cancel(self, order_id: str) -> None:  # pragma: no cover - stub
-        print(f"CANCEL ORDER -> {order_id}")
+        if self._killed:
+            raise RuntimeError("kill switch activated")
+
+        def _do_cancel() -> None:
+            print(f"CANCEL ORDER -> {order_id}")
+
+        self._with_retries(_do_cancel)
+        self._open_orders.discard(order_id)
+        self._record_ack()
 
     def positions(self) -> Dict[str, float]:  # pragma: no cover - trivial
         return dict(self._positions)

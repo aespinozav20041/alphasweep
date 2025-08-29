@@ -28,7 +28,14 @@ def build_features(bar):  # pragma: no cover - trivial
 
 def main(cfg_path: str = "config.yaml") -> None:
     cfg = yaml.safe_load(open(cfg_path))
-    risk = RiskManager(RiskLimits(max_position=cfg["risk"]["max_position"]))
+    risk_cfg = cfg.get("risk", {})
+    trail_cfg = risk_cfg.get("trailing", {})
+    limits = RiskLimits(
+        max_position=risk_cfg.get("max_position", 0.0),
+        trailing_enabled=trail_cfg.get("enabled", False),
+        atr_mult_trail=trail_cfg.get("atr_mult_trail", 3.0),
+    )
+    risk = RiskManager(limits)
     cost = CostModel(**cfg["execution"])
     exec_client = SimExecutionClient(cost_model=cost)
     engine = TradingEngine(DummyModel(), build_features, risk, exec_client)
