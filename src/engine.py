@@ -43,8 +43,10 @@ class TradingEngine:
         order = Order(symbol=getattr(market_data, "symbol", ""), qty=qty, price=side_price)
         if not self.risk_manager.pre_trade(order, self.execution_client.positions()):
             return None
+        order = self.risk_manager.limit_order(order)
         order_id = self.execution_client.send(order)
-        self.risk_manager.post_trade(order, self.execution_client.positions())
+        atr = getattr(market_data, "atr", None)
+        self.risk_manager.post_trade(order, self.execution_client.positions(), atr=atr)
         return order_id
 
     # Convenience aliases ------------------------------------------------
