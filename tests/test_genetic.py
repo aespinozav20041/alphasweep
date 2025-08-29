@@ -7,24 +7,17 @@ from quant_pipeline.genetic import GeneticOptimizer
 
 def test_run_backtest_with_genes():
     df = pd.DataFrame({"ret": [0.01, -0.02, 0.03, -0.01]})
-    genes = [1, 16, 0.1, 5, 1, 0.001, 0.01]
+    genes = [1, 16, 0.1, 5, 1, 0.001, 0.01, 0.0, 0.5, 1]
     assert len(genes) == len(GENE_NAMES)
-    pnl = run_backtest(df, genes, threshold=0.0, ema_alpha=0.5, cooldown=1)
+    pnl = run_backtest(df, genes)
     assert isinstance(pnl, float)
 
 
 def test_turnover_penalty():
     df = pd.DataFrame({"ret": [0.01, -0.02, 0.03, -0.01]})
-    genes = [1, 16, 0.1, 5, 1, 0.001, 0.01]
-    pnl_raw = run_backtest(df, genes, threshold=0.0, ema_alpha=0.0, cooldown=0)
-    pnl_penalised = run_backtest(
-        df,
-        genes,
-        threshold=0.0,
-        ema_alpha=0.0,
-        cooldown=0,
-        turnover_penalty=1.0,
-    )
+    genes = [1, 16, 0.1, 5, 1, 0.001, 0.01, 0.0, 0.0, 0]
+    pnl_raw = run_backtest(df, genes)
+    pnl_penalised = run_backtest(df, genes, turnover_penalty=1.0)
     assert pnl_penalised <= pnl_raw
 
 
