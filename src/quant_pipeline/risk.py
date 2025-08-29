@@ -4,11 +4,73 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Callable, Dict, Optional
+
+import yaml
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RiskConfig:
+    """Configuration dataclass loaded from ``conf/risk.yaml``."""
+
+    max_dd_daily: float = 0.05
+    max_dd_weekly: float = 0.1
+    latency_threshold: float = 100.0
+    latency_window: int = 3
+    pause_minutes: int = 1
+    max_position_notional_symbol: Dict[str, float] | None = None
+    max_total_notional: float = float("inf")
+    max_turnover_day: float = float("inf")
+    min_notional_exchange: Dict[str, float] | None = None
+    correlation_threshold: float = 0.8
+    corr_reduction: float = 0.5
+    target_volatility: float = 0.02
+    kelly_fraction: float = 1.0
+    sl_atr: float = 3.0
+    tp_atr: float = 6.0
+    atr_window: int = 14
+    regime_reduction: float = 0.5
+
+
+def load_risk_config(path: str | Path = Path("conf/risk.yaml")) -> RiskConfig:
+    """Load risk limits configuration from YAML file."""
+
+    cfg = RiskConfig()
+    cfg_path = Path(path)
+    if cfg_path.exists():
+        with cfg_path.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        for key, value in data.items():
+            if hasattr(cfg, key) and value is not None:
+                setattr(cfg, key, value)
+    return cfg
+
+
+class ATRCalculator:
+    """Rolling Average True Range calculator."""
+
+    def __init__(self, window: int = 14) -> None:
+        self.window = window
+        self.tr = deque(maxlen=window)
+        self.prev_close: float | None = None
+
+    def update(self, bar: Dict[str, float]) -> float:
+        close = float(bar["close"])
+        high = float(bar.get("high", close))
+        low = float(bar.get("low", close))
+        if self.prev_close is None:
+            tr = high - low
+        else:
+            tr = max(high - low, abs(high - self.prev_close), abs(low - self.prev_close))
+        self.tr.append(tr)
+        self.prev_close = close
+        return sum(self.tr) / len(self.tr) if self.tr else 0.0
 
 
 class RiskManager:
@@ -58,6 +120,12 @@ class RiskManager:
         correlation_threshold: float = 0.8,
         corr_reduction: float = 0.5,
         position_closer: Callable[[], None] | None = None,
+        target_volatility: float = 0.02,
+        kelly_fraction: float = 1.0,
+        sl_atr: float = 3.0,
+        tp_atr: float = 6.0,
+        atr_window: int = 14,
+        regime_reduction: float = 0.5,
     ) -> None:
         self.max_dd_daily = max_dd_daily
         self.max_dd_weekly = max_dd_weekly
@@ -71,6 +139,12 @@ class RiskManager:
         self.correlation_threshold = correlation_threshold
         self.corr_reduction = corr_reduction
         self.position_closer = position_closer
+        self.target_volatility = target_volatility
+        self.kelly_fraction = kelly_fraction
+        self.sl_atr = sl_atr
+        self.tp_atr = tp_atr
+        self.atr_window = atr_window
+        self.regime_reduction = regime_reduction
         self.pause_until: Optional[datetime] = None
         self._daily_dd = 0.0
         self._weekly_dd = 0.0
@@ -153,8 +227,10 @@ class RiskManager:
     # ------------------------------------------------------------------
     # Correlation throttle
     # ------------------------------------------------------------------
-    def apply_correlation_throttle(self, weights: Dict[str, float], corr: float) -> Dict[str, float]:
-        """Reduce BTC/ETH weights if correlation exceeds threshold."""
+    def apply_correlation_throttle(
+        self, weights: Dict[str, float], *, corr: float, regime: str | None = None
+    ) -> Dict[str, float]:
+        """Reduce weights based on correlation or market regime."""
 
         if corr > self.correlation_threshold:
             btc = weights.get("BTC", 0.0)
@@ -169,7 +245,26 @@ class RiskManager:
                     corr,
                     self.correlation_threshold,
                 )
+        if regime and regime.lower() != "bull":
+            weights = {k: v * self.regime_reduction for k, v in weights.items()}
+            logger.info("Regime throttle applied: %s", regime)
         return weights
 
+    def kelly_position(self, *, mu: float, sigma: float) -> float:
+        """Compute position size using fractional Kelly and target volatility."""
 
-__all__ = ["RiskManager"]
+        if sigma <= 0:
+            return 0.0
+        kelly = mu / (sigma ** 2)
+        kelly *= self.kelly_fraction
+        return kelly * (self.target_volatility / sigma)
+
+    def atr_sl_tp(self, price: float, atr: float) -> tuple[float, float]:
+        """Return stop-loss and take-profit levels based on ATR."""
+
+        sl = price - self.sl_atr * atr
+        tp = price + self.tp_atr * atr
+        return sl, tp
+
+
+__all__ = ["RiskManager", "ATRCalculator", "RiskConfig", "load_risk_config"]
