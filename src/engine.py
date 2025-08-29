@@ -34,6 +34,9 @@ class TradingEngine:
     def on_bar(self, market_data: Any) -> Optional[str]:
         """Process one market data event and optionally send an order."""
 
+        self.risk_manager.update_price(
+            getattr(market_data, "symbol", ""), getattr(market_data, "price", 0.0)
+        )
         features = self.feature_builder(market_data)
         signal = float(self.model.predict(features))
         qty = self.size_fn(signal)

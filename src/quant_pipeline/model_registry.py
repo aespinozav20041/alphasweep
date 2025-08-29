@@ -102,6 +102,16 @@ class ModelRegistry:
             )
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS model_calibration(
+                model_id INTEGER,
+                ts INTEGER,
+                prob_true TEXT,
+                prob_pred TEXT
+            )
+            """
+        )
         self.conn.commit()
 
     # ------------------------------------------------------------------
@@ -202,6 +212,38 @@ class ModelRegistry:
             cur = self.conn.cursor()
             cur.execute(
                 "SELECT * FROM model_oos WHERE model_id=? ORDER BY ts",
+                (model_id,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def log_calibration_curve(
+        self,
+        model_id: int,
+        *,
+        prob_true: List[float],
+        prob_pred: List[float],
+        ts: Optional[int] = None,
+    ) -> None:
+        """Store calibration curve points for a model."""
+
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO model_calibration(model_id, ts, prob_true, prob_pred)
+                VALUES(?,?,?,?)
+                """,
+                (model_id, ts, json.dumps(prob_true), json.dumps(prob_pred)),
+            )
+            self.conn.commit()
+
+    def list_calibration_curves(self, model_id: int) -> List[Dict]:
+        """Retrieve stored calibration curves for a model."""
+
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "SELECT * FROM model_calibration WHERE model_id=? ORDER BY ts",
                 (model_id,),
             )
             return [dict(r) for r in cur.fetchall()]

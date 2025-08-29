@@ -140,22 +140,38 @@ class SimExecutionClient(ExecutionClient):
 class BrokerExecutionClient(ExecutionClient):
     """Placeholder implementation for live trading.
 
-    In a production system this class would wrap a library such as CCXT,
-    IBKR, or a broker SDK.  The methods currently log their usage making
-    it easy to later plug in the real API calls.
+    A :class:`CostModel` is used to record fees and slippage so that
+    live trading can track realised costs similar to the simulator.  The
+    client keeps a ledger of submitted orders which are cancelled upon
+    disconnect.
     """
 
-    def __init__(self):
+    def __init__(self, cost_model: Optional[CostModel] = None):
+        self.cost_model = cost_model or CostModel()
         self._positions: Dict[str, float] = {}
+        self._orders: Dict[str, Order] = {}
+        self._ledger: List[Dict[str, float]] = []
 
     def send(self, order: Order) -> str:  # pragma: no cover - stub
-        # Replace the print statements with real broker API calls.
-        print(f"LIVE ORDER -> {order.symbol} {order.qty}@{order.price}")
+        cost = self.cost_model.apply(order.price or 0.0, order.qty)
+        print(f"LIVE ORDER -> {order.symbol} {order.qty}@{order.price} cost={cost:.4f}")
         self._positions[order.symbol] = self._positions.get(order.symbol, 0.0) + order.qty
+        self._orders[order.id] = order
+        self._ledger.append({"id": order.id, "cost": cost})
         return order.id
 
     def cancel(self, order_id: str) -> None:  # pragma: no cover - stub
         print(f"CANCEL ORDER -> {order_id}")
+        self._orders.pop(order_id, None)
+
+    def cancel_all(self) -> None:  # pragma: no cover - stub
+        for oid in list(self._orders.keys()):
+            self.cancel(oid)
+
+    def handle_disconnect(self) -> None:  # pragma: no cover - stub
+        """Cancel all resting orders on a disconnect event."""
+
+        self.cancel_all()
 
     def positions(self) -> Dict[str, float]:  # pragma: no cover - trivial
         return dict(self._positions)

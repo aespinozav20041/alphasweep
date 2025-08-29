@@ -45,3 +45,6 @@ def test_walkforward_logs_oos_and_stability(tmp_path):
     metrics = json.loads(first["metrics_json"])
     assert "coef" in params
     assert "metric" in metrics
+
+    calib_rows = reg.list_calibration_curves(model_id)
+    assert len(calib_rows) == 3
