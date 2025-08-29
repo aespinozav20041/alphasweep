@@ -1,0 +1,11 @@
+max_dd_daily: 0.05
+max_dd_weekly: 0.1
+latency_threshold: 100
+latency_window: 3
+pause_minutes: 1
+target_volatility: 0.02
+kelly_fraction: 0.5
+sl_atr: 3
+tp_atr: 6
+atr_window: 14
+regime_reduction: 0.5
