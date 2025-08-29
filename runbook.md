@@ -65,3 +65,31 @@ Increase trade size only when rolling 30 d Sharpe > 0 and no kill-switch event
 - Scale `MAX_TOTAL_NOTIONAL` proportionally.
 
 Monitor drawdowns, latency and alerts continuously while scaling.
+
+## Alert diagnostics
+
+Use Slack or email alerts as a trigger to investigate and roll back if
+necessary.
+
+- **Connection failure**
+  1. Verify network reachability to the affected service.
+  2. Check service logs and restart the component or switch to a backup.
+  3. If connectivity cannot be restored quickly, pause trading and follow
+     the rollback plan.
+- **Timeout**
+  1. Identify the operation from the alert message.
+  2. Inspect `/metrics` for latency anomalies.
+  3. Retry once; if timeouts persist, pause trading and roll back.
+- **Anomalous ratios** (e.g. `data_missing_bars_ratio`,
+  `risk_fetch_failures_total`)
+  1. Confirm the metric on `/metrics`.
+  2. Run data or risk diagnostics scripts to locate the source.
+  3. If the ratio remains elevated, execute the rollback plan.
+
+## Alert rollback
+
+Unresolved alerts require rolling back:
+
+1. Pause the trading loop.
+2. Close outstanding positions.
+3. Restore the previous champion model.
