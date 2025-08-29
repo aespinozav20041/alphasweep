@@ -80,10 +80,7 @@ def run_backtest(
     threshold: float = 0.0,
     ema_alpha: float = 0.0,
     cooldown: int = 0,
-
     turnover_penalty: float = 0.0,
-) -> float:
-=======
     spread_col: str | None = "spread",
     volume_col: str | None = "volume",
     volume_cost: float = 0.0,
@@ -140,8 +137,6 @@ def run_backtest(
     if turnover_penalty > 0:
         turns = (signal != signal.shift()).sum()
         pnl -= turnover_penalty * float(turns)
-    return float(pnl)
-=======
 
     # Simulate latency from order queues and network/broker delays.
     total_latency = max(order_latency, 0) + max(network_latency, 0)
