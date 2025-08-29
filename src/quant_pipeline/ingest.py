@@ -135,3 +135,95 @@ def ingest_ohlcv_ccxt(
 
     conn.close()
 
+
+def _prep_ts(df: pd.DataFrame, tz: str) -> pd.DataFrame:
+    """Ensure timestamp column is datetime with tz and set as index."""
+
+    df = df.copy()
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+    df["timestamp"] = df["timestamp"].dt.tz_convert(tz)
+    return df.set_index("timestamp").sort_index()
+
+
+def _resample_ohlcv(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+    """Resample OHLCV data to the specified rule."""
+
+    o = df["open"].resample(rule).first()
+    h = df["high"].resample(rule).max()
+    l = df["low"].resample(rule).min()
+    c = df["close"].resample(rule).last()
+    v = df.get("volume", pd.Series(dtype=float)).resample(rule).sum()
+    return pd.concat([o, h, l, c, v], axis=1, keys=["open", "high", "low", "close", "volume"]).dropna(how="all")
+
+
+def _adjust_splits_outliers(df: pd.DataFrame, corporate: Optional[pd.DataFrame]) -> pd.DataFrame:
+    """Adjust price history for splits and winsorise outliers."""
+
+    out = df.copy()
+    if corporate is not None and not corporate.empty and "split_ratio" in corporate.columns:
+        corp = corporate.copy()
+        corp["timestamp"] = pd.to_datetime(corp["timestamp"], unit="ms", utc=True)
+        corp = corp.sort_values("timestamp")
+        split = corp.set_index("timestamp")["split_ratio"]
+        split = split.reindex(out.index, method="bfill").fillna(1.0)
+        adj = split.iloc[::-1].cumprod().iloc[::-1]
+        price_cols = [c for c in ["open", "high", "low", "close"] if c in out.columns]
+        out[price_cols] = out[price_cols].div(adj, axis=0)
+    # simple outlier handling using winsorisation
+    if len(out) >= 10:
+        for col in [c for c in ["open", "high", "low", "close", "volume"] if c in out.columns]:
+            q_low = out[col].quantile(0.01)
+            q_high = out[col].quantile(0.99)
+            out[col] = out[col].clip(q_low, q_high)
+    return out
+
+
+def combine_market_data(
+    ohlcv: pd.DataFrame,
+    l2: Optional[pd.DataFrame] = None,
+    l3: Optional[pd.DataFrame] = None,
+    corporate: Optional[pd.DataFrame] = None,
+    macro: Optional[pd.DataFrame] = None,
+    *,
+    tz: str = "UTC",
+    resample_rule: str = "1h",
+) -> pd.DataFrame:
+    """Merge OHLCV with L2/L3, corporate actions and macro data.
+
+    Parameters
+    ----------
+    ohlcv : pd.DataFrame
+        Standard OHLCV data with millisecond timestamps.
+    l2, l3, corporate, macro : pd.DataFrame, optional
+        Additional datasets indexed by millisecond timestamps.
+    tz : str
+        Target timezone for the resulting index.
+    resample_rule : str
+        Pandas resampling rule, e.g. "1h" or "15min".
+    """
+
+    base = _prep_ts(ohlcv, tz)
+    base = _adjust_splits_outliers(base, corporate)
+    base = _resample_ohlcv(base, resample_rule)
+
+    def _merge(df: Optional[pd.DataFrame], how: str = "mean") -> pd.DataFrame:
+        if df is None or df.empty:
+            return base
+        other = _prep_ts(df, tz)
+        if how == "mean":
+            other = other.resample(resample_rule).mean()
+        else:
+            other = other.resample(resample_rule).last()
+        return base.join(other, how="left")
+
+    base = _merge(l2)
+    base = _merge(l3)
+    if macro is not None and not macro.empty:
+        macro_p = _prep_ts(macro, tz).resample(resample_rule).last().ffill()
+        base = base.join(macro_p, how="left")
+
+    return base.reset_index()
+
+
+__all__ = ["ingest_ohlcv_ccxt", "combine_market_data"]
+
