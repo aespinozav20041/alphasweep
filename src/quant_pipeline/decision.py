@@ -6,8 +6,9 @@ import logging
 
 from typing import Dict, List
 
+
 import pandas as pd
-=======
+
 from collections import deque
 from statistics import median
 
@@ -17,6 +18,7 @@ from .oms import OMS
 from .observability import Observability
 from .risk import RiskManager, ATRCalculator
 from .state import load_snapshot, save_snapshot
+from .quality import quality_check
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +132,15 @@ class DecisionLoop:
                 pass
 
     def on_bar(self, bar: Dict[str, float]) -> None:
+
+        if not quality_check(bar):
+            self.obs.increment_quality_errors()
+            return
+        feats = self.fb.update(bar)
+        scaled = self.scaler.transform(feats[["ret"]])
+        self.scaler.update(feats[["ret"]])
+        pred = float(self.model.predict(scaled)[0])
+
         feats = self.fb.update({k: v for k, v in bar.items() if k != "symbol"})
         feats_no_ts = feats.drop(columns=["timestamp"])  # all feature columns
         # scale current feature vector (excluding timestamp) using past statistics
@@ -140,6 +151,7 @@ class DecisionLoop:
         scaled_window = self.scaler.transform(window_df).to_numpy()
         self.scaler.update(feats_no_ts)
         pred = float(self.model.predict(scaled_window)[0])
+
         if self.lstm_path and hasattr(self.model, "save_state"):
             self.model.save_state(self.lstm_path)
         self._ema = self.alpha * pred + (1 - self.alpha) * self._ema
