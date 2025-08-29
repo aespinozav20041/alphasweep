@@ -125,7 +125,15 @@ class ModelRegistry:
         status: str = "challenger",
         ts: Optional[int] = None,
     ) -> int:
-        """Register a model and return its id."""
+        """Register a model and return its id.
+
+        In addition to the core model artefact and calibration file, optional
+        paths can be supplied for associated components such as LSTM weights,
+        scalers/normalisers, active feature lists, trading thresholds and risk
+        rules.  Metadata about the training run (genetic algorithm version,
+        random seed and a hash of the training dataset) can also be stored so
+        that promoted champions can later be fully reconstructed.
+        """
 
         with self._lock:
             cur = self.conn.cursor()
