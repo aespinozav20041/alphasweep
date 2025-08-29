@@ -8,7 +8,7 @@ from typing import Dict
 from .features import FeatureBuilder, Scaler
 from .oms import OMS
 from .observability import Observability
-from .risk import RiskManager
+from .risk import RiskManager, ATRCalculator
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,7 @@ class DecisionLoop:
         # feature engineering utilities operating in streaming mode
         self.fb = FeatureBuilder()
         self.scaler = Scaler()
+        self.atr = ATRCalculator(window=self.risk.atr_window)
 
     def on_bar(self, bar: Dict[str, float]) -> None:
         feats = self.fb.update(bar)
@@ -56,8 +57,12 @@ class DecisionLoop:
         self._cooldown = self.cooldown
         symbol = bar["symbol"]
         price = float(bar["close"])
-        weights = self.risk.apply_correlation_throttle({symbol: self._ema}, corr=0.0)
+        sigma = float(self.scaler.std().get("ret", 0.0))
+        target = self.risk.kelly_position(mu=self._ema, sigma=sigma)
+        weights = self.risk.apply_correlation_throttle({symbol: target}, corr=0.0, regime="bull")
         target = weights[symbol]
+        atr = self.atr.update(bar)
+        _sl, _tp = self.risk.atr_sl_tp(price, atr)
         current = self.position.get(symbol, 0.0)
         diff = target - current
         if diff == 0:

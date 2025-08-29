@@ -127,6 +127,10 @@ def run_backtest(
     pnl_series = strat_ret.cumsum()
     pnl = pnl_series.iloc[-1] if not pnl_series.empty else 0.0
 
+    if turnover_penalty > 0:
+        turns = (exec_signal != exec_signal.shift()).sum()
+        pnl -= turnover_penalty * float(turns)
+
     if not return_metrics:
         return float(pnl)
 

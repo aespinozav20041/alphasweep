@@ -11,6 +11,7 @@ DRAWDOWN = Gauge("drawdown", "Max drawdown")
 FILLS = Counter("fills", "Number of order fills")
 ORDERS = Counter("orders", "Number of orders sent")
 LATENCY = Histogram("latency_seconds", "Order latency in seconds")
+ORDER_QUEUE = Gauge("order_queue", "Current length of the order queue")
 
 
 def start_metrics_server(port: int = 8000) -> None:
@@ -27,5 +28,6 @@ __all__ = [
     "FILLS",
     "ORDERS",
     "LATENCY",
+    "ORDER_QUEUE",
     "start_metrics_server",
 ]

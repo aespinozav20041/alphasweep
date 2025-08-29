@@ -32,8 +32,9 @@ def test_promotion_and_hot_reload(tmp_path):
         data_hash="hash-a",
         status="champion",
     )
-    for i in range(5):
-        reg.log_perf(champ_id, ret=0.01, sharpe=1.0, ts=i)
+    champ_rets = [0.01, -0.05, 0.01, 0.01, 0.01]
+    for i, r in enumerate(champ_rets):
+        reg.log_perf(champ_id, ret=r, sharpe=0.5, ts=i)
 
     b_files = _mk_files(tmp_path, "b")
     challenger_id = reg.register_model(
@@ -50,8 +51,9 @@ def test_promotion_and_hot_reload(tmp_path):
         seed=1,
         data_hash="hash-b",
     )
-    for i in range(5):
-        reg.log_perf(challenger_id, ret=0.02, sharpe=1.0, ts=i)
+    b_rets = [0.02, 0.02, -0.02, 0.02, 0.02]
+    for i, r in enumerate(b_rets):
+        reg.log_perf(challenger_id, ret=r, sharpe=1.0, ts=i)
 
     promoted = reg.evaluate_challengers(
         eval_window_bars=5,
@@ -99,8 +101,9 @@ def test_promotion_and_hot_reload(tmp_path):
         seed=1,
         data_hash="hash-c",
     )
-    for i in range(5):
-        reg.log_perf(c_id, ret=0.03, sharpe=1.0, ts=i)
+    c_rets = [0.03, 0.03, -0.01, 0.03, 0.03]
+    for i, r in enumerate(c_rets):
+        reg.log_perf(c_id, ret=r, sharpe=1.5, ts=i)
 
     reg.evaluate_challengers(
         eval_window_bars=5,
