@@ -1,6 +1,11 @@
 import logging
 
-from quant_pipeline.risk import RiskManager
+import logging
+from pathlib import Path
+
+import pytest
+
+from quant_pipeline.risk import RiskManager, load_risk_config
 
 
 def _rm(position_closer=None):
@@ -90,6 +95,37 @@ def test_correlation_throttle():
         pause_minutes=1,
     )
     weights = {"BTC": 0.6, "ETH": 0.4}
-    new_weights = rm.apply_correlation_throttle(weights, corr=0.9)
+    new_weights = rm.apply_correlation_throttle(weights, corr=0.9, regime="bull")
     assert new_weights["BTC"] == 0.6 * 0.5
     assert new_weights["ETH"] == 0.4 * 0.5
+
+
+def test_kelly_atr_and_regime_throttle():
+    rm = RiskManager(
+        max_dd_daily=1,
+        max_dd_weekly=1,
+        latency_threshold=100,
+        latency_window=1,
+        pause_minutes=1,
+        target_volatility=0.02,
+        kelly_fraction=0.5,
+        sl_atr=3,
+        tp_atr=6,
+        regime_reduction=0.3,
+    )
+    pos = rm.kelly_position(mu=0.02, sigma=0.1)
+    assert pos == pytest.approx(0.2)
+    sl, tp = rm.atr_sl_tp(100, 2)
+    assert sl == pytest.approx(94)
+    assert tp == pytest.approx(112)
+    weights = {"BTC": 1.0}
+    new_weights = rm.apply_correlation_throttle(weights, corr=0.0, regime="bear")
+    assert new_weights["BTC"] == pytest.approx(0.3)
+
+
+def test_load_risk_config(tmp_path):
+    path = tmp_path / "risk.yaml"
+    path.write_text("max_dd_daily: 0.07\npause_minutes: 5\n")
+    cfg = load_risk_config(path)
+    assert cfg.max_dd_daily == 0.07
+    assert cfg.pause_minutes == 5
