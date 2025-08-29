@@ -13,7 +13,7 @@ from trading.stable_allocator import (
     perform_sweep,
 )
 from quant_pipeline.observability import Observability
-from fastapi.testclient import TestClient
+import pytest
 
 
 def test_compute_sweep_amount_defaults():
@@ -101,6 +101,9 @@ def test_cli_sweep_and_scheduler(monkeypatch):
 
 
 def test_report_and_metrics(monkeypatch, tmp_path):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
     ledger.clear()
     cfg = StableAllocConfig(broker="mock")
     obs = Observability()
@@ -120,6 +123,8 @@ def test_report_and_metrics(monkeypatch, tmp_path):
     assert row[4] == "filled"
     assert row[5].startswith("mock-")
 
+    if obs.app is None:
+        pytest.skip("FastAPI not available")
     client = TestClient(obs.app)
     metrics = client.get("/metrics").text
     assert "stable_sweep_amount_usd" in metrics

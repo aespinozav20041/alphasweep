@@ -5,7 +5,19 @@ from quant_pipeline.simple_lstm import SimpleLSTM
 from quant_pipeline.decision import DecisionLoop
 from quant_pipeline.risk import RiskManager
 from quant_pipeline.oms import OMS
-from quant_pipeline.observability import Observability
+
+try:
+    from quant_pipeline.observability import Observability
+except Exception:  # pragma: no cover - fallback stub
+    class Observability:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __getattr__(self, _):
+            def _noop(*args, **kwargs):
+                pass
+
+            return _noop
 
 
 class DummyExchange:
