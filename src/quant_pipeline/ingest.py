@@ -8,6 +8,7 @@ from typing import Iterable, Optional
 
 import ccxt
 import pandas as pd
+import requests
 
 from .logging import get_logger
 from .storage import to_parquet
@@ -136,6 +137,52 @@ def ingest_ohlcv_ccxt(
     conn.close()
 
 
+def fetch_news_sentiment(
+    provider: str,
+    symbols: Iterable[str],
+    *,
+    start: Optional[int] = None,
+    end: Optional[int] = None,
+) -> pd.DataFrame:
+    """Download news/sentiment signals for ``symbols``.
+
+    Parameters
+    ----------
+    provider : str
+        URL template with a ``{symbol}`` placeholder returning JSON payloads
+        containing ``timestamp`` and ``sentiment`` fields.
+    symbols : Iterable[str]
+        Instruments to query.
+    start, end : int, optional
+        Millisecond timestamp boundaries to filter the returned records.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns ``timestamp`` (ms), ``symbol`` and ``sentiment``
+        where the sentiment score is expected to be in the ``[-1, 1]`` range.
+    """
+
+    frames = []
+    for sym in symbols:
+        url = provider.format(symbol=sym)
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        payload = resp.json()
+        df = pd.DataFrame(payload)
+        if not {"timestamp", "sentiment"}.issubset(df.columns):
+            raise ValueError("payload must contain 'timestamp' and 'sentiment'")
+        df["symbol"] = sym
+        frames.append(df)
+
+    out = pd.concat(frames, ignore_index=True)
+    if start is not None:
+        out = out[out["timestamp"] >= int(start)]
+    if end is not None:
+        out = out[out["timestamp"] <= int(end)]
+    return out
+
+
 def _prep_ts(df: pd.DataFrame, tz: str) -> pd.DataFrame:
     """Ensure timestamp column is datetime with tz and set as index."""
 
@@ -184,18 +231,20 @@ def combine_market_data(
     l3: Optional[pd.DataFrame] = None,
     corporate: Optional[pd.DataFrame] = None,
     macro: Optional[pd.DataFrame] = None,
+    news: Optional[pd.DataFrame] = None,
     *,
     tz: str = "UTC",
     resample_rule: str = "1h",
 ) -> pd.DataFrame:
-    """Merge OHLCV with L2/L3, corporate actions and macro data.
+    """Merge OHLCV with L2/L3, corporate actions, macro and news data.
 
     Parameters
     ----------
     ohlcv : pd.DataFrame
         Standard OHLCV data with millisecond timestamps.
-    l2, l3, corporate, macro : pd.DataFrame, optional
-        Additional datasets indexed by millisecond timestamps.
+    l2, l3, corporate, macro, news : pd.DataFrame, optional
+        Additional datasets indexed by millisecond timestamps. ``news`` is
+        expected to provide at least a ``sentiment`` column.
     tz : str
         Target timezone for the resulting index.
     resample_rule : str
@@ -218,6 +267,9 @@ def combine_market_data(
 
     base = _merge(l2)
     base = _merge(l3)
+    if news is not None and not news.empty:
+        news_p = _prep_ts(news, tz).resample(resample_rule).last().ffill()
+        base = base.join(news_p, how="left")
     if macro is not None and not macro.empty:
         macro_p = _prep_ts(macro, tz).resample(resample_rule).last().ffill()
         base = base.join(macro_p, how="left")
@@ -225,5 +277,5 @@ def combine_market_data(
     return base.reset_index()
 
 
-__all__ = ["ingest_ohlcv_ccxt", "combine_market_data"]
+__all__ = ["ingest_ohlcv_ccxt", "fetch_news_sentiment", "combine_market_data"]
 
