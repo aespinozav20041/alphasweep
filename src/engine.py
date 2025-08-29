@@ -43,7 +43,12 @@ class TradingEngine:
         order = Order(symbol=getattr(market_data, "symbol", ""), qty=qty, price=side_price)
         if not self.risk_manager.pre_trade(order, self.execution_client.positions()):
             return None
-        order_id = self.execution_client.send(order)
+        symbol_state = {
+            "spread": getattr(market_data, "spread", 0.0),
+            "volatility": getattr(market_data, "volatility", 0.0),
+            "volume": getattr(market_data, "volume", float("inf")),
+        }
+        order_id = self.execution_client.send(order, symbol_state)
         self.risk_manager.post_trade(order, self.execution_client.positions())
         return order_id
 
