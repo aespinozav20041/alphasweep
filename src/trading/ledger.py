@@ -59,6 +59,32 @@ def _connection() -> sqlite3.Connection:
             )
             """
         )
+        _conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fills (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                qty REAL NOT NULL,
+                price REAL NOT NULL,
+                usd REAL NOT NULL,
+                day TEXT NOT NULL,
+                note TEXT,
+                ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        _conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS pnl (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                day TEXT NOT NULL,
+                pnl REAL NOT NULL,
+                model TEXT,
+                ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
         _conn.commit()
     return _conn
 
@@ -181,6 +207,57 @@ def record_result(
     conn.commit()
 
 
+def record_fill(
+    order_id: str,
+    ticker: str,
+    qty: float,
+    price: float,
+    *,
+    day: Optional[date] = None,
+    note: str | None = None,
+) -> None:
+    """Record a trade fill in the fills table."""
+
+    if day is None:
+        day = datetime.utcnow().date()
+    conn = _connection()
+    usd = qty * price
+    conn.execute(
+        """
+        INSERT INTO fills(order_id, ticker, qty, price, usd, day, note)
+        VALUES(?,?,?,?,?,?,?)
+        """,
+        (
+            order_id,
+            ticker,
+            float(qty),
+            float(price),
+            float(usd),
+            day.isoformat(),
+            note,
+        ),
+    )
+    conn.commit()
+
+
+def record_pnl(
+    pnl: float,
+    *,
+    day: Optional[date] = None,
+    model: str | None = None,
+) -> None:
+    """Record a PnL observation for a given day and optional model."""
+
+    if day is None:
+        day = datetime.utcnow().date()
+    conn = _connection()
+    conn.execute(
+        "INSERT INTO pnl(day, pnl, model) VALUES(?,?,?)",
+        (day.isoformat(), float(pnl), model),
+    )
+    conn.commit()
+
+
 def entries() -> List[LedgerEntry]:
     """Return all ledger entries in insertion order."""
 
@@ -220,5 +297,21 @@ def clear() -> None:
 
     conn = _connection()
     conn.execute("DELETE FROM ledger")
+    conn.execute("DELETE FROM fills")
+    conn.execute("DELETE FROM pnl")
     conn.commit()
+
+
+__all__ = [
+    "LedgerEntry",
+    "record",
+    "record_intent",
+    "record_result",
+    "record_fill",
+    "record_pnl",
+    "entries",
+    "pending",
+    "replay",
+    "clear",
+]
 
