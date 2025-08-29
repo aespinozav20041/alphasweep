@@ -80,10 +80,7 @@ def run_backtest(
     threshold: float = 0.0,
     ema_alpha: float = 0.0,
     cooldown: int = 0,
-
     turnover_penalty: float = 0.0,
-) -> float:
-=======
     spread_col: str | None = "spread",
     volume_col: str | None = "volume",
     volume_cost: float = 0.0,
@@ -110,13 +107,19 @@ def run_backtest(
         fitness of a gene vector.
     turnover_penalty:
         Penalty applied per position change to discourage excessive turnover.
+    spread_col, volume_col, volume_cost, slippage, order_latency, network_latency:
+        Parameters controlling trading frictions and execution details.
+    return_metrics:
+        When ``True`` return detailed metrics instead of a single ``pnl`` value.
+    rng:
+        Optional random number generator used for slippage simulation.
 
     Returns
     -------
-    float
-        The cumulative return of the strategy after post-processing or,
-        when ``return_metrics`` is ``True``, a dictionary containing
-        ``pnl``, ``calmar``, ``max_drawdown`` and ``turnover``.
+    float | dict[str, float]
+        Either the cumulative return of the strategy or a dictionary containing
+        ``pnl``, ``calmar``, ``max_drawdown`` and ``turnover`` when
+        ``return_metrics`` is ``True``.
     """
 
     if "ret" not in df.columns:
@@ -136,24 +139,18 @@ def run_backtest(
     signal = _apply_postprocess(
         raw_signal, threshold=threshold, ema_alpha=ema_alpha, cooldown=cooldown
     )
-    pnl = (signal.shift().fillna(0) * df["ret"]).cumsum().iloc[-1]
-    if turnover_penalty > 0:
-        turns = (signal != signal.shift()).sum()
-        pnl -= turnover_penalty * float(turns)
-    return float(pnl)
-=======
 
     # Simulate latency from order queues and network/broker delays.
     total_latency = max(order_latency, 0) + max(network_latency, 0)
-    if total_latency > 0:
-        exec_signal = signal.shift(total_latency).fillna(0)
-    else:
-        exec_signal = signal
+    exec_signal = signal.shift(total_latency).fillna(0) if total_latency > 0 else signal
 
     trades = exec_signal.diff().abs().fillna(exec_signal.abs())
     spread = df[spread_col] if spread_col and spread_col in df.columns else 0
     volume = df[volume_col] if volume_col and volume_col in df.columns else 1
     cost = trades * (spread + volume_cost / volume)
+
+    if turnover_penalty > 0:
+        cost += turnover_penalty * trades
 
     if slippage > 0:
         if rng is None:

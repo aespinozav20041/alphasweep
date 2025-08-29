@@ -96,31 +96,7 @@ class AutoTrainer:
             ts=int(time.time()),
         )
         logger.info("registered challenger %s for shadow eval", model_id)
-=======
-        from concurrent.futures import ThreadPoolExecutor
-
-        def _train() -> Dict[str, str]:
-            return self.train_model(dataset)
-
-        with ThreadPoolExecutor(max_workers=self.num_parallel) as ex:
-            futures = [ex.submit(_train) for _ in range(self.num_parallel)]
-            for fut in futures:
-                info = fut.result()
-                if not info:
-                    logger.warning("training produced no model")
-                    continue
-                model_id = self.registry.register_model(
-                    model_type=info["type"],
-                    genes_json=info.get("genes_json", "{}"),
-                    artifact_path=info["artifact_path"],
-                    calib_path=info["calib_path"],
-                    ts=int(time.time()),
-                )
-                logger.info("registered challenger %s for shadow eval", model_id)
-
         self.registry.prune_challengers(self.max_challengers)
-
-
 class PurgedKFold:
     """K-Fold cross-validator with purging and optional embargo.
 
