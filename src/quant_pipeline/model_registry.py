@@ -247,8 +247,6 @@ class ModelRegistry:
                 self._recent_perf(champ["id"], eval_window_bars) if champ else []
             )
 
-        champ_ret = sum(p["ret"] for p in champ_perf)
-
         def _metrics(perf: List[Dict]) -> Dict[str, float]:
             rets = [p["ret"] for p in perf]
             sharpes = [p["sharpe"] for p in perf]
@@ -260,6 +258,14 @@ class ModelRegistry:
                 "dd": dd,
                 "bars": len(perf),
             }
+
+        champ_metrics = _metrics(champ_perf) if champ_perf else {
+            "ret": 0.0,
+            "sharpe": float("-inf"),
+            "dd": float("inf"),
+            "bars": 0,
+        }
+        champ_ret = champ_metrics["ret"]
 
         challengers = self.list_models(status="challenger")
 
@@ -277,6 +283,13 @@ class ModelRegistry:
                 uplift >= uplift_min
                 and metrics["sharpe"] >= sharpe_min
                 and metrics["dd"] <= max_drawdown
+                and (
+                    not champ_perf
+                    or (
+                        metrics["sharpe"] > champ_metrics["sharpe"]
+                        and metrics["dd"] < champ_metrics["dd"]
+                    )
+                )
             ):
                 self.promote_model(chal["id"], export_dir)
                 return chal["id"]
