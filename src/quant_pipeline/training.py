@@ -5,11 +5,13 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Callable, Dict, Iterator, Tuple
+from typing import Any, Callable, Dict, Iterator, Sequence, Tuple
 
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pandas as pd
+
+from .genetic import GeneticOptimizer
 
 from .model_registry import ModelRegistry
 from .labels import triple_barrier
@@ -28,11 +30,16 @@ class AutoTrainer:
         history_days: int,
         max_challengers: int,
         build_dataset: Callable[[int], Any],
-        train_model: Callable[[Any], Dict[str, str]],
+        train_model: Callable[[Any, Sequence[float] | None], Dict[str, str]],
         num_parallel: int = 1,
         label_horizon: int | None = None,
         label_up_mult: float = 1.0,
         label_down_mult: float = 1.0,
+        gene_bounds: Sequence[tuple[float, float]] | None = None,
+        fitness_fn: Callable[[Dict[str, str]], float] | None = None,
+        ga_generations: int = 10,
+        ga_population: int = 10,
+        ga_rng: np.random.Generator | None = None,
     ) -> None:
         self.registry = registry
         self.train_every_bars = train_every_bars
@@ -44,6 +51,11 @@ class AutoTrainer:
         self.label_horizon = label_horizon
         self.label_up_mult = label_up_mult
         self.label_down_mult = label_down_mult
+        self.gene_bounds = gene_bounds
+        self.fitness_fn = fitness_fn
+        self.ga_generations = ga_generations
+        self.ga_population = ga_population
+        self.ga_rng = ga_rng
         self._bar_count = 0
         self._event = threading.Event()
         self._stop = threading.Event()
@@ -96,6 +108,40 @@ class AutoTrainer:
             )
             dataset = dataset.copy()
             dataset["label"] = labels
+        if self.gene_bounds:
+            def _ga_train(genes: Sequence[float]) -> float:
+                info = self.train_model(dataset, genes)
+                if not info:
+                    logger.warning("training produced no model")
+                    return float("-inf")
+                self.registry.register_model(
+                    model_type=info["type"],
+                    genes_json=info.get("genes_json", "{}"),
+                    artifact_path=info["artifact_path"],
+                    calib_path=info["calib_path"],
+                    lstm_path=info.get("lstm_path"),
+                    scaler_path=info.get("scaler_path"),
+                    features_path=info.get("features_path"),
+                    thresholds_path=info.get("thresholds_path"),
+                    risk_rules_path=info.get("risk_rules_path"),
+                    ga_version=info.get("ga_version"),
+                    seed=info.get("seed"),
+                    data_hash=info.get("data_hash"),
+                    ts=int(time.time()),
+                )
+                if self.fitness_fn:
+                    return float(self.fitness_fn(info))
+                return 0.0
+
+            opt = GeneticOptimizer(
+                _ga_train,
+                self.gene_bounds,
+                population_size=self.ga_population,
+                rng=self.ga_rng,
+            )
+            opt.optimise(generations=self.ga_generations)
+            self.registry.prune_challengers(self.max_challengers)
+            return
 
         def _train() -> Dict[str, str]:
             return self.train_model(dataset)
