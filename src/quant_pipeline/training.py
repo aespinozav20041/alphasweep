@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pandas as pd
 
+from .datasets import make_lstm_windows
 from .model_registry import ModelRegistry
 from .labeling import forward_return, triple_barrier_labels
 
@@ -27,9 +28,12 @@ class AutoTrainer:
         train_every_bars: int,
         history_days: int,
         max_challengers: int,
-        build_dataset: Callable[[int], Any],
+        dataset_loader: Callable[[int], pd.DataFrame],
         train_model: Callable[[Any], Dict[str, str]],
         num_parallel: int = 1,
+        seq_len: int = 10,
+        cv_splits: int = 5,
+        embargo: int = 0,
         label_horizon: int | None = None,
         label_up_mult: float = 1.0,
         label_down_mult: float = 1.0,
@@ -39,8 +43,10 @@ class AutoTrainer:
         self.train_every_bars = train_every_bars
         self.history_days = history_days
         self.max_challengers = max_challengers
-        self.build_dataset = build_dataset
+        self.dataset_loader = dataset_loader
         self.train_model = train_model
+        self.seq_len = seq_len
+        self.cv = PurgedKFold(n_splits=cv_splits, embargo=embargo)
         self.num_parallel = max(1, num_parallel)
         self.label_horizon = label_horizon
         self.label_up_mult = label_up_mult
@@ -85,25 +91,22 @@ class AutoTrainer:
 
     def _train_cycle(self) -> None:
         logger.info("training cycle started")
-        dataset = self.build_dataset(self.history_days)
-        if (
-            self.label_horizon is not None
-            and isinstance(dataset, pd.DataFrame)
-        ):
-            dataset = dataset.copy()
+        df = self.dataset_loader(self.history_days)
+        if self.label_horizon is not None:
+            df = df.copy()
             if self.label_type == "forward_return":
-                dataset["label"] = forward_return(
-                    dataset, self.label_horizon
-                )
+                df["label"] = forward_return(df, self.label_horizon)
             elif self.label_type == "triple_barrier":
-                dataset["label"] = triple_barrier_labels(
-                    dataset,
+                df["label"] = triple_barrier_labels(
+                    df,
                     self.label_up_mult,
                     self.label_down_mult,
                     self.label_horizon,
                 )
             else:
                 raise ValueError(f"unknown label_type {self.label_type}")
+
+        dataset = self.build_dataset(df)
 
         def _train() -> Dict[str, str]:
             return self.train_model(dataset)
@@ -140,6 +143,13 @@ class AutoTrainer:
 
         if registered:
             self.registry.prune_challengers(self.max_challengers)
+
+    def build_dataset(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, list[Tuple[np.ndarray, np.ndarray]]]:
+        """Create LSTM training windows and purged CV splits."""
+
+        X, y = make_lstm_windows(df, self.seq_len)
+        splits = list(self.cv.split(X))
+        return X, y, splits
 
 
 class PurgedKFold:
