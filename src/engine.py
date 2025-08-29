@@ -33,9 +33,9 @@ class TradingEngine:
     # ------------------------------------------------------------------
     def on_bar(self, market_data: Any) -> Optional[str]:
         """Process one market data event and optionally send an order."""
-
-        features = self.feature_builder(market_data)
-        signal = float(self.model.predict(features))
+        bar = self.feature_builder(market_data)
+        symbol = getattr(market_data, "symbol", "")
+        signal = float(self.model.predict(bar, symbol=symbol))
         qty = self.size_fn(signal)
         if qty == 0:
             return None
