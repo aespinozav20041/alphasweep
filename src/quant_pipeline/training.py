@@ -131,7 +131,8 @@ class AutoTrainer:
         train_every_bars: int,
         history_days: int,
         max_challengers: int,
-        dataset_loader: Callable[[int], pd.DataFrame],
+        dataset_loader: Callable[[int], pd.DataFrame] | None = None,
+        build_dataset: Callable[[int], pd.DataFrame] | None = None,
         train_model: Callable[[Any], Dict[str, str]],
         num_parallel: int = 1,
         seq_len: int = 10,
@@ -146,7 +147,10 @@ class AutoTrainer:
         self.train_every_bars = train_every_bars
         self.history_days = history_days
         self.max_challengers = max_challengers
-        self.dataset_loader = dataset_loader
+        loader = dataset_loader or build_dataset
+        if loader is None:
+            raise ValueError("dataset_loader or build_dataset must be provided")
+        self.dataset_loader = loader
         self.train_model = train_model
         self.seq_len = seq_len
         self.cv = PurgedKFold(n_splits=cv_splits, embargo=embargo)
@@ -209,7 +213,10 @@ class AutoTrainer:
             else:
                 raise ValueError(f"unknown label_type {self.label_type}")
 
-        dataset = self.build_dataset(df)
+        if "label" in df.columns:
+            dataset = self.prepare_dataset(df)
+        else:
+            dataset = df
 
         def _train() -> Dict[str, str]:
             return self.train_model(dataset)
@@ -253,12 +260,20 @@ class AutoTrainer:
         if registered:
             self.registry.prune_challengers(self.max_challengers)
 
-    def build_dataset(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, list[Tuple[np.ndarray, np.ndarray]]]:
+    def prepare_dataset(
+        self, df: pd.DataFrame
+    ) -> Tuple[np.ndarray, np.ndarray, list[Tuple[np.ndarray, np.ndarray]]]:
         """Create LSTM training windows and purged CV splits."""
 
         X, y = make_lstm_windows(df, self.seq_len)
         splits = list(self.cv.split(X))
         return X, y, splits
+
+    # Backwards compatibility
+    def build_dataset(
+        self, df: pd.DataFrame
+    ) -> Tuple[np.ndarray, np.ndarray, list[Tuple[np.ndarray, np.ndarray]]]:
+        return self.prepare_dataset(df)
 
 
 class PurgedKFold:

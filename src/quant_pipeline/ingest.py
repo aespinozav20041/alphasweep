@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Iterable, Optional, Callable
+from typing import Iterable, Optional, Callable, Dict, Any
 
 import ccxt
 import pandas as pd
@@ -15,6 +15,34 @@ from .storage import to_parquet
 from .utils import retry
 
 logger = get_logger(__name__)
+
+
+class CorporateMacroAdapter:
+    """Adapter for retrieving corporate actions and macro indicators."""
+
+    def __init__(self, base_url: str = "https://api.example.com") -> None:
+        self.base_url = base_url.rstrip("/")
+
+    def _get(self, path: str, params: Dict[str, Any]) -> pd.DataFrame:
+        payload = {k: v for k, v in params.items() if v is not None}
+        resp = requests.get(f"{self.base_url}/{path}", params=payload, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        return pd.DataFrame(data)
+
+    def fetch_corporate(
+        self, symbol: str, *, start: Optional[int] = None, end: Optional[int] = None
+    ) -> pd.DataFrame:
+        """Fetch corporate action records for ``symbol``."""
+
+        return self._get(f"corporate/{symbol}", {"start": start, "end": end})
+
+    def fetch_macro(
+        self, indicator: str, *, start: Optional[int] = None, end: Optional[int] = None
+    ) -> pd.DataFrame:
+        """Fetch macroeconomic indicator series."""
+
+        return self._get(f"macro/{indicator}", {"start": start, "end": end})
 
 # default locations
 DATA_PATH = Path(__file__).resolve().parents[2] / "data"
@@ -350,6 +378,7 @@ def combine_market_data(
 
 
 __all__ = [
+    "CorporateMacroAdapter",
     "ingest_ohlcv_ccxt",
     "ingest_orderbook",
     "ingest_news",
