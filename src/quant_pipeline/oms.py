@@ -95,6 +95,59 @@ class OMS:
         self.wal = OrderWAL(wal_path)
 
     # ------------------------------------------------------------------
+    # Algorithmic scheduling
+    # ------------------------------------------------------------------
+    def schedule_child_orders(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        qty: float,
+        strategy: str = "twap",
+        intervals: int = 1,
+        volume_profile: Optional[list[float]] = None,
+        participation: float = 0.1,
+    ) -> list[float]:
+        """Split a parent order into child slices according to strategy.
+
+        Parameters
+        ----------
+        symbol, side, qty : order details
+        strategy : "twap", "vwap" or "pov"
+        intervals : number of slices for TWAP/VWAP
+        volume_profile : expected volumes per interval for VWAP/POV
+        participation : participation rate for POV
+        """
+
+        strategy = strategy.lower()
+        if intervals <= 0:
+            intervals = 1
+
+        if strategy == "twap":
+            slice_qty = qty / intervals
+            return [slice_qty for _ in range(intervals)]
+        if strategy == "vwap":
+            if not volume_profile:
+                volume_profile = [1.0] * intervals
+            total = sum(volume_profile)
+            if total == 0:
+                return [qty]
+            return [qty * v / total for v in volume_profile]
+        if strategy == "pov":
+            if not volume_profile:
+                volume_profile = [1.0] * intervals
+            remaining = qty
+            sched: list[float] = []
+            for v in volume_profile:
+                slice_qty = min(remaining, participation * v)
+                sched.append(slice_qty)
+                remaining -= slice_qty
+            if remaining > 0 and sched:
+                sched[-1] += remaining
+            return sched
+        raise ValueError("unknown strategy")
+
+    # ------------------------------------------------------------------
     # Order submission and idempotency
     # ------------------------------------------------------------------
     def submit_order(
