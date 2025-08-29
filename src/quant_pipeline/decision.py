@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 
 from typing import Dict, List
-=======
-from typing import Dict
 from collections import deque
 from statistics import median
 
