@@ -6,10 +6,17 @@ import time
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
+import pandas as pd
+
 from quant_pipeline.doctor import validate_ohlcv
-from quant_pipeline.ingest import ingest_ohlcv_ccxt, ingest_orderbook, ingest_news
+from quant_pipeline.ingest import (
+    CorporateMacroAdapter,
+    ingest_ohlcv_ccxt,
+    ingest_orderbook,
+    ingest_news,
+)
 from quant_pipeline.observability import Observability
-from quant_pipeline.storage import read_table
+from quant_pipeline.storage import read_table, to_parquet
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +172,108 @@ class IngestService:
                 raise ValueError("timestamps not monotonic")
             dup_ratio = df["timestamp"].duplicated().sum() / len(df)
             self.obs.report_duplicate_ratio(canon, dup_ratio)
+
+        latency_ms = (time.time() - start_ts) * 1000.0
+        self.obs.observe_latency(latency_ms)
+
+    def ingest_corporate(
+        self,
+        adapter: CorporateMacroAdapter,
+        symbols: Iterable[str],
+        *,
+        timeframe: str = "1d",
+        start: Optional[int] = None,
+        end: Optional[int] = None,
+    ) -> None:
+        """Ingest corporate actions using ``adapter``."""
+
+        start_ts = time.time()
+        frames: list[pd.DataFrame] = []
+        for sym in symbols:
+            df = adapter.fetch_corporate(sym, start=start, end=end)
+            if df.empty:
+                continue
+            if "timestamp" not in df.columns:
+                raise ValueError("payload must contain 'timestamp'")
+            df = df.copy()
+            df["timestamp"] = df["timestamp"].astype("int64")
+            df["symbol"] = sym
+            df["source"] = adapter.__class__.__name__
+            df["timeframe"] = timeframe
+            frames.append(df)
+
+        if not frames:
+            return
+
+        out_df = pd.concat(frames, ignore_index=True)
+        out_df = out_df.drop_duplicates(subset=["timestamp", "symbol"]).sort_values(
+            "timestamp"
+        )
+        to_parquet(out_df, "corporate", base_path=self.lake_path)
+
+        tf_ms = _tf_to_ms(timeframe)
+        for sym in symbols:
+            sym_df = out_df[out_df["symbol"] == sym]
+            if sym_df.empty:
+                continue
+            diffs = sym_df["timestamp"].diff().dropna()
+            missing = (diffs > tf_ms).sum()
+            missing_ratio = missing / max(len(diffs), 1)
+            dup_ratio = sym_df["timestamp"].duplicated().sum() / len(sym_df)
+            self.obs.report_missing_bars(sym, timeframe, missing_ratio)
+            self.obs.report_duplicate_ratio(sym, dup_ratio)
+
+        latency_ms = (time.time() - start_ts) * 1000.0
+        self.obs.observe_latency(latency_ms)
+
+    def ingest_macro(
+        self,
+        adapter: CorporateMacroAdapter,
+        indicators: Iterable[str],
+        *,
+        timeframe: str = "1d",
+        start: Optional[int] = None,
+        end: Optional[int] = None,
+    ) -> None:
+        """Ingest macroeconomic indicators using ``adapter``."""
+
+        start_ts = time.time()
+        frames: list[pd.DataFrame] = []
+        for ind in indicators:
+            df = adapter.fetch_macro(ind, start=start, end=end)
+            if df.empty:
+                continue
+            required = {"timestamp", "value"}
+            if not required.issubset(df.columns):
+                missing = required - set(df.columns)
+                raise ValueError(f"missing columns: {missing}")
+            df = df.copy()
+            df = df.astype({"timestamp": "int64", "value": "float64"})
+            df["symbol"] = ind
+            df["source"] = adapter.__class__.__name__
+            df["timeframe"] = timeframe
+            frames.append(df)
+
+        if not frames:
+            return
+
+        out_df = pd.concat(frames, ignore_index=True)
+        out_df = out_df.drop_duplicates(subset=["timestamp", "symbol"]).sort_values(
+            "timestamp"
+        )
+        to_parquet(out_df, "macro", base_path=self.lake_path)
+
+        tf_ms = _tf_to_ms(timeframe)
+        for ind in indicators:
+            ind_df = out_df[out_df["symbol"] == ind]
+            if ind_df.empty:
+                continue
+            diffs = ind_df["timestamp"].diff().dropna()
+            missing = (diffs > tf_ms).sum()
+            missing_ratio = missing / max(len(diffs), 1)
+            dup_ratio = ind_df["timestamp"].duplicated().sum() / len(ind_df)
+            self.obs.report_missing_bars(ind, timeframe, missing_ratio)
+            self.obs.report_duplicate_ratio(ind, dup_ratio)
 
         latency_ms = (time.time() - start_ts) * 1000.0
         self.obs.observe_latency(latency_ms)

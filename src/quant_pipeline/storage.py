@@ -5,7 +5,14 @@ from typing import Iterable, Optional, Sequence, Type
 
 import pandas as pd
 
-from .models import BarOHLCV, OrderBookBest, PerpMetrics, NewsSentiment
+from .models import (
+    BarOHLCV,
+    OrderBookBest,
+    PerpMetrics,
+    NewsSentiment,
+    CorporateAction,
+    MacroIndicator,
+)
 
 # Base directory for lake storage
 LAKE_PATH = Path(__file__).resolve().parents[2] / "lake"
@@ -19,6 +26,8 @@ SCHEMAS = {
     "orderbook_best": OrderBookBest,
     "perp_metrics": PerpMetrics,
     "news": NewsSentiment,
+    "corporate": CorporateAction,
+    "macro": MacroIndicator,
 }
 
 
