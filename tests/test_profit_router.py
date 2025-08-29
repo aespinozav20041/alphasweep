@@ -37,10 +37,17 @@ def test_settle_triggers_sweep_and_scheduler(monkeypatch):
     monkeypatch.setattr(pr.subprocess, "run", fake_run)
 
     pr.settle(date.today())
-    assert len(ledger.entries) == 1
-    assert ledger.entries[0].status == "planned"
+    entries = ledger.entries()
+    assert len(entries) == 1
+    assert entries[0].status == "planned"
 
     # run scheduler to fill
-    monkeypatch.setattr(sa.brokers.mock, "place_market_on_open", lambda t, u: ("oid", "filled"))
+    def fake_place(t, u, obs=None, *, day=None, intent_id=None):
+        iid = intent_id or ledger.record_intent(t, u, day=day)
+        ledger.record_result(iid, "oid", "filled", day=day)
+        return "oid", "filled"
+
+    monkeypatch.setattr(sa.brokers.mock, "place_market_on_open", fake_place)
     sa.run_scheduler(cfg)
-    assert ledger.entries[0].status == "filled"
+    entries = ledger.entries()
+    assert entries[-1].status == "filled"

@@ -26,7 +26,8 @@ def test_compute_sweep_amount_defaults():
 def test_already_swept_checks_ledger():
     ledger.clear()
     today = date.today()
-    ledger.record("oid", "SPY", 100, "filled", day=today)
+    iid = ledger.record_intent("SPY", 100, day=today)
+    ledger.record_result(iid, "oid", "filled", day=today)
     assert already_swept(today, "SPY")
     assert not already_swept(today, "VOO")
 
@@ -44,7 +45,7 @@ def test_should_block_sweep_dd_weekly(monkeypatch):
 
     blocked, reason = should_block_sweep(today)
     assert blocked and reason == "dd_weekly"
-    assert any(e.status == "blocked" and e.note == "dd_weekly" for e in ledger.entries)
+    assert any(e.status == "blocked" and e.note == "dd_weekly" for e in ledger.entries())
 
 
 def test_place_or_schedule_plans_when_closed(monkeypatch):
@@ -57,14 +58,15 @@ def test_place_or_schedule_plans_when_closed(monkeypatch):
     monkeypatch.setattr(sa, "next_market_open", lambda now, tz: next_open)
 
     place_or_schedule(today, 100.0, cfg)
-    assert len(ledger.entries) == 1
-    entry = ledger.entries[0]
+    entries = ledger.entries()
+    assert len(entries) == 1
+    entry = entries[0]
     assert entry.status == "planned"
     assert entry.scheduled_at == next_open
 
     # Idempotency: second call should not add another entry
     place_or_schedule(today, 100.0, cfg)
-    assert len(ledger.entries) == 1
+    assert len(ledger.entries()) == 1
 
 
 def test_cli_sweep_and_scheduler(monkeypatch):
@@ -79,17 +81,21 @@ def test_cli_sweep_and_scheduler(monkeypatch):
     runner = CliRunner()
     res = runner.invoke(sa.cli, ["sweep", "--date", today.isoformat(), "--pnl", "100"])
     assert res.exit_code == 0
-    assert len(ledger.entries) == 1
-    assert ledger.entries[0].status == "planned"
+    entries = ledger.entries()
+    assert len(entries) == 1
+    assert entries[0].status == "planned"
 
-    def fake_place(ticker, usd):
+    def fake_place(ticker, usd, obs=None, *, day=None, intent_id=None):
+        iid = intent_id or ledger.record_intent(ticker, usd, day=day)
+        ledger.record_result(iid, "mock-oid", "filled", day=day)
         return "mock-oid", "filled"
 
     monkeypatch.setattr(sa.brokers.mock, "place_market_on_open", fake_place)
     res = runner.invoke(sa.cli, ["run-scheduler"])
     assert res.exit_code == 0
-    assert len(ledger.entries) == 1
-    e = ledger.entries[0]
+    entries = ledger.entries()
+    assert len(entries) == 2
+    e = entries[-1]
     assert e.status == "filled"
     assert e.order_id == "mock-oid"
 

@@ -7,7 +7,11 @@ def test_mock_market_on_open_records_ledger():
     oid, status = mock.place_market_on_open("SPY", 123.45)
     assert status == "filled"
     assert oid.startswith("mock-")
-    assert any(e.order_id == oid and e.ticker == "SPY" for e in ledger.entries)
+    entries = ledger.entries()
+    assert any(
+        e.order_id == oid and e.ticker == "SPY" and e.status == "filled"
+        for e in entries
+    )
 
 
 def test_min_notional_enforced():
