@@ -10,13 +10,12 @@ from .models import BarOHLCV, OrderBookBest, PerpMetrics
 # Base directory for lake storage
 LAKE_PATH = Path(__file__).resolve().parents[2] / "lake"
 
-# Mapping between table names and their schemas
+# Mapping between table names and their schemas.  Historically the OHLCV table
+# was referenced as either ``ohlcv`` or ``bar_ohlcv`` so we keep both aliases to
+# remain backward compatible.
 SCHEMAS = {
-
     "ohlcv": BarOHLCV,
-=======
     "bar_ohlcv": BarOHLCV,
-
     "orderbook_best": OrderBookBest,
     "perp_metrics": PerpMetrics,
 }

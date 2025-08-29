@@ -1,0 +1,28 @@
+version: '3.9'
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: qp
+      POSTGRES_PASSWORD: qp
+      POSTGRES_DB: qp
+    volumes:
+      - db_data:/var/lib/postgresql/data
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-sqlite:///runs/registry.db}
+    depends_on:
+      - db
+  worker:
+    build: .
+    command: python -m quant_pipeline
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-sqlite:///runs/registry.db}
+      LIVE_MODE: ${LIVE_MODE:-paper}
+    depends_on:
+      - db
+volumes:
+  db_data:
