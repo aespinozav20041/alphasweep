@@ -15,7 +15,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 import uuid
 
 
@@ -38,6 +38,12 @@ class Order:
     price: Optional[float]
         Optional limit price. ``None`` implies market order in the
         simulated client.
+    spread: float
+        Bid/ask spread of the bar triggering the order. Defaults to 0.
+    vol: float
+        Volatility estimate for the current bar. Defaults to 0.
+    volume: float
+        Traded volume of the current bar. Defaults to 0.
     id: str
         Unique order identifier generated automatically when the order is
         instantiated.
@@ -46,6 +52,9 @@ class Order:
     symbol: str
     qty: float
     price: Optional[float] = None
+    spread: float = 0.0
+    vol: float = 0.0
+    volume: float = 0.0
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
 
@@ -89,16 +98,40 @@ class ExecutionClient(ABC):
 # ---------------------------------------------------------------------------
 
 class CostModel:
-    """Applies linear slippage and fees in basis points."""
+    """Applies slippage and fees in basis points.
 
-    def __init__(self, fee_bps: float = 0.0, slippage_bps: float = 0.0):
+    A custom ``slippage_fn`` can be provided to model more advanced
+    behaviors. The function receives the current bar's ``spread``,
+    ``vol`` (volatility) and ``volume`` and returns slippage in basis
+    points.
+    """
+
+    def __init__(
+        self,
+        fee_bps: float = 0.0,
+        slippage_bps: float = 0.0,
+        slippage_fn: Optional[Callable[[float, float, float], float]] = None,
+    ):
         self.fee_bps = fee_bps
         self.slippage_bps = slippage_bps
+        self.slippage_fn = slippage_fn
 
-    def apply(self, price: float, qty: float) -> float:
+    def apply(
+        self,
+        price: float,
+        qty: float,
+        spread: float = 0.0,
+        vol: float = 0.0,
+        volume: float = 0.0,
+    ) -> float:
         """Return total cost including slippage and fees."""
 
-        slip_price = price * (1 + self.slippage_bps / 10_000)
+        slip_bps = (
+            self.slippage_fn(spread, vol, volume)
+            if self.slippage_fn is not None
+            else self.slippage_bps
+        )
+        slip_price = price * (1 + slip_bps / 10_000)
         fee = price * abs(qty) * self.fee_bps / 10_000
         return slip_price * qty + fee
 
@@ -120,7 +153,13 @@ class SimExecutionClient(ExecutionClient):
         self._ledger: List[Order] = []
 
     def send(self, order: Order) -> str:  # pragma: no cover - trivial
-        cost = self.cost_model.apply(order.price or 0.0, order.qty)
+        cost = self.cost_model.apply(
+            order.price or 0.0,
+            order.qty,
+            order.spread,
+            order.vol,
+            order.volume,
+        )
         self._positions[order.symbol] = self._positions.get(order.symbol, 0.0) + order.qty
         self._ledger.append(order)
         # In a real backtest we would store PnL including cost here.

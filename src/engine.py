@@ -40,7 +40,14 @@ class TradingEngine:
         if qty == 0:
             return None
         side_price = getattr(market_data, "price", None)
-        order = Order(symbol=getattr(market_data, "symbol", ""), qty=qty, price=side_price)
+        order = Order(
+            symbol=getattr(market_data, "symbol", ""),
+            qty=qty,
+            price=side_price,
+            spread=getattr(market_data, "spread", 0.0),
+            vol=getattr(market_data, "volatility", 0.0),
+            volume=getattr(market_data, "volume", 0.0),
+        )
         if not self.risk_manager.pre_trade(order, self.execution_client.positions()):
             return None
         order_id = self.execution_client.send(order)
