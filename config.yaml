@@ -1,0 +1,14 @@
+# Example configuration shared across modes.
+# The `mode` field selects the execution client and data source used by the
+# runners.  Valid values: `backtest`, `walkforward`, `live`.
+mode: backtest
+
+risk:
+  max_position: 10
+
+execution:
+  fee_bps: 1      # commissions in basis points
+  slippage_bps: 2 # extra slippage applied by the simulator
+
+data:
+  source: csv

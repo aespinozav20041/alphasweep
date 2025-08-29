@@ -70,6 +70,7 @@ def run_backtest(
     slippage: float = 0.0,
     order_latency: int = 0,
     network_latency: int = 0,
+    max_volume_frac: float | None = None,
     return_metrics: bool = False,
     rng: np.random.Generator | None = None,
 ) -> float | dict[str, float]:
@@ -89,6 +90,9 @@ def run_backtest(
         Column names used to pull spread and volume information.
     volume_cost, slippage : float
         Transaction cost parameters.
+    max_volume_frac : float, optional
+        When provided simulate partial fills by limiting the absolute change in
+        position to ``volume * max_volume_frac`` on each bar.
     order_latency, network_latency : int
         Delays applied to the execution signal.
     return_metrics : bool
@@ -113,23 +117,51 @@ def run_backtest(
     total_latency = max(order_latency, 0) + max(network_latency, 0)
     exec_signal = signal.shift(total_latency).fillna(0) if total_latency > 0 else signal
 
-    trades = exec_signal.diff().abs().fillna(exec_signal.abs())
-    spread = df[spread_col] if spread_col and spread_col in df.columns else 0
-    volume = df[volume_col] if volume_col and volume_col in df.columns else 1
-    cost = trades * (spread + volume_cost / volume + turnover_penalty)
+    spread = (
+        df[spread_col] if spread_col and spread_col in df.columns else pd.Series(0, index=df.index)
+    )
+    volume = (
+        df[volume_col] if volume_col and volume_col in df.columns else pd.Series(1, index=df.index)
+    )
 
-    if slippage > 0:
-        if rng is None:
+    if max_volume_frac is None:
+        trades = exec_signal.diff().abs().fillna(exec_signal.abs())
+        cost = trades * (spread + volume_cost / volume + turnover_penalty)
+
+        if slippage > 0:
+            if rng is None:
+                rng = np.random.default_rng()
+            cost += np.abs(rng.normal(0.0, slippage, size=len(df))) * trades
+
+        strat_ret = exec_signal.shift().fillna(0) * df["ret"] - cost
+        pnl_series = strat_ret.cumsum()
+        pnl = pnl_series.iloc[-1] if not pnl_series.empty else 0.0
+
+        turns = trades.sum()
+    else:
+        position = 0.0
+        pnl_list: list[float] = []
+        turns = 0.0
+        if slippage > 0 and rng is None:
             rng = np.random.default_rng()
-        cost += np.abs(rng.normal(0.0, slippage, size=len(df))) * trades
+        for i in range(len(df)):
+            desired = exec_signal.iloc[i]
+            cap = max_volume_frac * volume.iloc[i]
+            diff = desired - position
+            trade = float(np.clip(diff, -cap, cap))
+            position += trade
+            turns += abs(trade)
+            cost = abs(trade) * (
+                spread.iloc[i] + volume_cost / volume.iloc[i] + turnover_penalty
+            )
+            if slippage > 0:
+                cost += abs(rng.normal(0.0, slippage)) * abs(trade)
+            pnl_list.append(position * df["ret"].iloc[i] - cost)
+        pnl_series = pd.Series(pnl_list, index=df.index).cumsum()
+        pnl = pnl_series.iloc[-1] if not pnl_series.empty else 0.0
 
-    strat_ret = exec_signal.shift().fillna(0) * df["ret"] - cost
-    pnl_series = strat_ret.cumsum()
-    pnl = pnl_series.iloc[-1] if not pnl_series.empty else 0.0
-
-    if turnover_penalty > 0:
-        turns = (exec_signal != exec_signal.shift()).sum()
-        pnl -= turnover_penalty * float(turns)
+    if turnover_penalty > 0 and max_volume_frac is None:
+        pnl -= turnover_penalty * float((exec_signal != exec_signal.shift()).sum())
 
     if not return_metrics:
         return float(pnl)
@@ -137,7 +169,7 @@ def run_backtest(
     dd = pnl_series.cummax() - pnl_series
     max_dd = float(dd.max()) if not dd.empty else 0.0
     calmar = float(pnl / max_dd) if max_dd != 0 else float("inf")
-    turnover = float(trades.sum())
+    turnover = float(turns)
 
     return {
         "pnl": float(pnl),
