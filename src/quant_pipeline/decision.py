@@ -136,20 +136,30 @@ class DecisionLoop:
         if not quality_check(bar):
             self.obs.increment_quality_errors()
             return
-        feats = self.fb.update(bar)
-        scaled = self.scaler.transform(feats[["ret"]])
-        self.scaler.update(feats[["ret"]])
-        pred = float(self.model.predict(scaled)[0])
-
         feats = self.fb.update({k: v for k, v in bar.items() if k != "symbol"})
-        feats_no_ts = feats.drop(columns=["timestamp"])  # all feature columns
+        feature_cols = [
+            "ret",
+            "volatility",
+            "spread",
+            "mid_price",
+            "ob_imbalance",
+            "trade_imbalance",
+        ]
+        feats_no_ts = feats[feature_cols]
         # scale current feature vector (excluding timestamp) using past statistics
         _ = self.scaler.transform(feats_no_ts)
         # build feature window and scale it for the model
         window = self.fb.window()
-        window_df = pd.DataFrame(window, columns=feats_no_ts.columns)
-        scaled_window = self.scaler.transform(window_df).to_numpy()
+        window_df = pd.DataFrame(window, columns=feature_cols)
+        scaled_window = self.scaler.transform(window_df)
         self.scaler.update(feats_no_ts)
+        input_size = getattr(self.model, "input_size", None)
+        if input_size is not None and scaled_window.shape[-1] != input_size:
+            raise ValueError(
+                "feature window has {0} features but model expects {1}".format(
+                    scaled_window.shape[-1], input_size
+                )
+            )
         pred = float(self.model.predict(scaled_window)[0])
 
         if self.lstm_path and hasattr(self.model, "save_state"):

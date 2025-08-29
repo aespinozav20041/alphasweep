@@ -32,6 +32,8 @@ class SimpleLSTM(nn.Module):
         )
         self.fc = nn.Linear(hidden_size, 1)
         self.hidden: Optional[tuple[Tensor, Tensor]] = None
+        # expose expected input feature dimension for external checks
+        self.input_size = input_size
         for name, param in self.lstm.named_parameters():
             if "bias" in name:
                 nn.init.zeros_(param)

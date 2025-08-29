@@ -47,6 +47,8 @@ def test_state_persistence(tmp_path):
 
     loop1 = make_loop(snap)
     loop1.on_bar(bar1)
+    # ensure feature window retains the expected six feature columns
+    assert loop1.fb.window().shape[1] == 6
     loop1.position["BTC"] = 1.23
     loop1.save()
 
