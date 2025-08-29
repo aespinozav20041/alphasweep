@@ -45,7 +45,7 @@ def test_rate_limit(monkeypatch, broker, client_attr):
         monkeypatch.setattr(broker, client_attr, lambda: _IBClient(raise_error=True))
     with pytest.raises(Exception):
         broker.place_market_on_open("SPY", 100, obs)
-    assert ledger.entries[0].status == "error"
+    assert ledger.entries()[-1].status == "error"
     assert obs.order_errors_total._value.get() == 1
 
 
@@ -62,6 +62,7 @@ def test_cancelled(monkeypatch, broker, client_attr, cancel_status):
         monkeypatch.setattr(broker, client_attr, lambda: _IBClient(status=cancel_status))
     oid, status = broker.place_market_on_open("SPY", 100, obs)
     assert status == cancel_status
-    assert ledger.entries[0].order_id == oid
-    assert ledger.entries[0].status == cancel_status
+    entries = ledger.entries()
+    assert entries[-1].order_id == oid
+    assert entries[-1].status == cancel_status
     assert obs.order_errors_total._value.get() == 1

@@ -17,27 +17,25 @@ def _check(usd: float) -> None:
 
 
 def _client() -> Any:
-    """Instantiate Alpaca REST client.
-
-    Import is deferred so tests can monkeypatch ``_client`` without requiring
-    the SDK to be installed at import time.
-    """
+    """Instantiate Alpaca REST client."""
 
     import alpaca_trade_api as tradeapi  # type: ignore
 
     return tradeapi.REST()
 
 
-def _record(
-    order_id: str,
+def _record_result(
+    intent_id: str,
     ticker: str,
     usd: float,
+    order_id: str,
     status: str,
     obs: Observability | None,
+    *,
+    day=None,
+    note: str | None = None,
 ) -> Tuple[str, str]:
-    """Record order details to ledger and observability."""
-
-    ledger.record(order_id, ticker, usd, status)
+    ledger.record_result(intent_id, order_id, status, day=day, note=note)
     if obs is not None:
         if status.lower() in {"canceled", "rejected", "error"}:
             obs.increment_order_errors()
@@ -47,11 +45,18 @@ def _record(
 
 
 def place_market_on_open(
-    ticker: str, usd: float, obs: Observability | None = None
+    ticker: str,
+    usd: float,
+    obs: Observability | None = None,
+    *,
+    day=None,
+    intent_id: str | None = None,
 ) -> Tuple[str, str]:
     """Submit a market-on-open order via Alpaca."""
 
     _check(usd)
+    if intent_id is None:
+        intent_id = ledger.record_intent(ticker, usd, day=day)
     client = _client()
     try:
         order = client.submit_order(
@@ -65,19 +70,27 @@ def place_market_on_open(
         if obs is not None:
             obs.increment_order_errors()
         err_id = f"alpaca-error-{uuid.uuid4().hex[:8]}"
-        ledger.record(err_id, ticker, usd, "error", note=str(exc))
+        ledger.record_result(intent_id, err_id, "error", day=day, note=str(exc))
         raise
     order_id = getattr(order, "id", f"alpaca-{uuid.uuid4().hex[:8]}")
     status = getattr(order, "status", "unknown")
-    return _record(order_id, ticker, usd, status, obs)
+    return _record_result(intent_id, ticker, usd, order_id, status, obs, day=day)
 
 
 def place_twap(
-    ticker: str, usd: float, minutes: int = 30, obs: Observability | None = None
+    ticker: str,
+    usd: float,
+    minutes: int = 30,
+    obs: Observability | None = None,
+    *,
+    day=None,
+    intent_id: str | None = None,
 ) -> Tuple[str, str]:
     """Submit a TWAP order via Alpaca."""
 
     _check(usd)
+    if intent_id is None:
+        intent_id = ledger.record_intent(ticker, usd, day=day)
     client = _client()
     try:
         order = client.submit_order(
@@ -92,19 +105,26 @@ def place_twap(
         if obs is not None:
             obs.increment_order_errors()
         err_id = f"alpaca-error-{uuid.uuid4().hex[:8]}"
-        ledger.record(err_id, ticker, usd, "error", note=str(exc))
+        ledger.record_result(intent_id, err_id, "error", day=day, note=str(exc))
         raise
     order_id = getattr(order, "id", f"alpaca-{uuid.uuid4().hex[:8]}")
     status = getattr(order, "status", "unknown")
-    return _record(order_id, ticker, usd, status, obs)
+    return _record_result(intent_id, ticker, usd, order_id, status, obs, day=day)
 
 
 def place_limit_vwap(
-    ticker: str, usd: float, obs: Observability | None = None
+    ticker: str,
+    usd: float,
+    obs: Observability | None = None,
+    *,
+    day=None,
+    intent_id: str | None = None,
 ) -> Tuple[str, str]:
     """Submit a limit VWAP order via Alpaca."""
 
     _check(usd)
+    if intent_id is None:
+        intent_id = ledger.record_intent(ticker, usd, day=day)
     client = _client()
     try:
         order = client.submit_order(
@@ -120,8 +140,9 @@ def place_limit_vwap(
         if obs is not None:
             obs.increment_order_errors()
         err_id = f"alpaca-error-{uuid.uuid4().hex[:8]}"
-        ledger.record(err_id, ticker, usd, "error", note=str(exc))
+        ledger.record_result(intent_id, err_id, "error", day=day, note=str(exc))
         raise
     order_id = getattr(order, "id", f"alpaca-{uuid.uuid4().hex[:8]}")
     status = getattr(order, "status", "unknown")
-    return _record(order_id, ticker, usd, status, obs)
+    return _record_result(intent_id, ticker, usd, order_id, status, obs, day=day)
+

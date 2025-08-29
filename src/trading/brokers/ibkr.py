@@ -22,21 +22,22 @@ def _client() -> Any:
     from ib_insync import IB  # type: ignore
 
     ib = IB()
-    # Connection parameters are environment-specific; adjust as needed.
     ib.connect("127.0.0.1", 7497, clientId=1)
     return ib
 
 
-def _record(
-    order_id: str,
+def _record_result(
+    intent_id: str,
     ticker: str,
     usd: float,
+    order_id: str,
     status: str,
     obs: Observability | None,
+    *,
+    day=None,
+    note: str | None = None,
 ) -> Tuple[str, str]:
-    """Record order details to ledger and observability."""
-
-    ledger.record(order_id, ticker, usd, status)
+    ledger.record_result(intent_id, order_id, status, day=day, note=note)
     if obs is not None:
         if status.lower() in {"cancelled", "rejected", "error"}:
             obs.increment_order_errors()
@@ -46,11 +47,18 @@ def _record(
 
 
 def place_market_on_open(
-    ticker: str, usd: float, obs: Observability | None = None
+    ticker: str,
+    usd: float,
+    obs: Observability | None = None,
+    *,
+    day=None,
+    intent_id: str | None = None,
 ) -> Tuple[str, str]:
     """Submit a market-on-open order via IBKR."""
 
     _check(usd)
+    if intent_id is None:
+        intent_id = ledger.record_intent(ticker, usd, day=day)
     ib = _client()
     try:
         from ib_insync import Stock, MarketOrder  # type: ignore
@@ -62,19 +70,27 @@ def place_market_on_open(
         if obs is not None:
             obs.increment_order_errors()
         err_id = f"ibkr-error-{uuid.uuid4().hex[:8]}"
-        ledger.record(err_id, ticker, usd, "error", note=str(exc))
+        ledger.record_result(intent_id, err_id, "error", day=day, note=str(exc))
         raise
     order_id = str(getattr(trade.order, "orderId", uuid.uuid4().hex))
     status = str(getattr(trade.orderStatus, "status", "unknown"))
-    return _record(order_id, ticker, usd, status, obs)
+    return _record_result(intent_id, ticker, usd, order_id, status, obs, day=day)
 
 
 def place_twap(
-    ticker: str, usd: float, minutes: int = 30, obs: Observability | None = None
+    ticker: str,
+    usd: float,
+    minutes: int = 30,
+    obs: Observability | None = None,
+    *,
+    day=None,
+    intent_id: str | None = None,
 ) -> Tuple[str, str]:
     """Submit a TWAP order via IBKR."""
 
     _check(usd)
+    if intent_id is None:
+        intent_id = ledger.record_intent(ticker, usd, day=day)
     ib = _client()
     try:
         from ib_insync import Stock, MarketOrder, TagValue  # type: ignore
@@ -88,19 +104,26 @@ def place_twap(
         if obs is not None:
             obs.increment_order_errors()
         err_id = f"ibkr-error-{uuid.uuid4().hex[:8]}"
-        ledger.record(err_id, ticker, usd, "error", note=str(exc))
+        ledger.record_result(intent_id, err_id, "error", day=day, note=str(exc))
         raise
     order_id = str(getattr(trade.order, "orderId", uuid.uuid4().hex))
     status = str(getattr(trade.orderStatus, "status", "unknown"))
-    return _record(order_id, ticker, usd, status, obs)
+    return _record_result(intent_id, ticker, usd, order_id, status, obs, day=day)
 
 
 def place_limit_vwap(
-    ticker: str, usd: float, obs: Observability | None = None
+    ticker: str,
+    usd: float,
+    obs: Observability | None = None,
+    *,
+    day=None,
+    intent_id: str | None = None,
 ) -> Tuple[str, str]:
     """Submit a limit VWAP order via IBKR."""
 
     _check(usd)
+    if intent_id is None:
+        intent_id = ledger.record_intent(ticker, usd, day=day)
     ib = _client()
     try:
         from ib_insync import Stock, LimitOrder  # type: ignore
@@ -113,8 +136,9 @@ def place_limit_vwap(
         if obs is not None:
             obs.increment_order_errors()
         err_id = f"ibkr-error-{uuid.uuid4().hex[:8]}"
-        ledger.record(err_id, ticker, usd, "error", note=str(exc))
+        ledger.record_result(intent_id, err_id, "error", day=day, note=str(exc))
         raise
     order_id = str(getattr(trade.order, "orderId", uuid.uuid4().hex))
     status = str(getattr(trade.orderStatus, "status", "unknown"))
-    return _record(order_id, ticker, usd, status, obs)
+    return _record_result(intent_id, ticker, usd, order_id, status, obs, day=day)
+

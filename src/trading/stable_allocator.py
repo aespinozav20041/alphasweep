@@ -136,7 +136,7 @@ def compute_sweep_amount(net_pnl_usd: float, cfg: StableAllocConfig) -> float:
 
 def already_swept(day: date, ticker: str) -> bool:
     """Check if a sweep has already occurred for the given day and ticker."""
-    return any(entry.date == day and entry.ticker == ticker for entry in ledger.entries)
+    return any(entry.date == day and entry.ticker == ticker for entry in ledger.entries())
 
 
 def should_block_sweep(day: date, obs: Observability | None = None) -> tuple[bool, str]:
@@ -188,11 +188,12 @@ def place_or_schedule(day: date, amount_usd: float, cfg: StableAllocConfig) -> N
         return
 
     # Idempotency: avoid duplicates if already actioned for the day
-    for e in ledger.entries:
+    for e in ledger.entries():
         if e.date == day and e.ticker == cfg.ticker and e.status in {
             "sent",
             "filled",
             "planned",
+            "intent",
         }:
             return
 
@@ -200,25 +201,20 @@ def place_or_schedule(day: date, amount_usd: float, cfg: StableAllocConfig) -> N
     if is_market_open(now, cfg.timezone):
         broker_mod = getattr(brokers, cfg.broker)
         if cfg.order_style == "market_open":
-            order_id, status = broker_mod.place_market_on_open(cfg.ticker, amount_usd)
+            broker_mod.place_market_on_open(cfg.ticker, amount_usd, day=day)
         elif cfg.order_style == "twap_30m":
-            order_id, status = broker_mod.place_twap(cfg.ticker, amount_usd, minutes=30)
+            broker_mod.place_twap(cfg.ticker, amount_usd, minutes=30, day=day)
         elif cfg.order_style == "limit_vwap":
-            order_id, status = broker_mod.place_limit_vwap(cfg.ticker, amount_usd)
+            broker_mod.place_limit_vwap(cfg.ticker, amount_usd, day=day)
         else:  # pragma: no cover - defensive branch
             raise ValueError(f"unknown order_style {cfg.order_style}")
-        for e in reversed(ledger.entries):
-            if e.order_id == order_id:
-                e.date = day
-                break
     else:
         scheduled = next_market_open(now, cfg.timezone)
-        ledger.record(
-            order_id=f"plan-{day.isoformat()}",
-            ticker=cfg.ticker,
-            usd=amount_usd,
-            status="planned",
+        ledger.record_intent(
+            cfg.ticker,
+            amount_usd,
             day=day,
+            status="planned",
             scheduled_at=scheduled,
         )
 
@@ -231,28 +227,28 @@ def run_scheduler(cfg: StableAllocConfig | None = None, obs: Observability | Non
 
     broker_mod = getattr(brokers, cfg.broker)
 
-    for entry in list(ledger.entries):
-        if entry.status != "planned" or entry.scheduled_at is None:
+    for entry in ledger.pending("planned"):
+        if entry.scheduled_at is None:
             continue
         now_local = datetime.now(tz=entry.scheduled_at.tzinfo)
         if entry.scheduled_at > now_local:
             continue
 
-        before = len(ledger.entries)
         if cfg.order_style == "market_open":
-            order_id, status = broker_mod.place_market_on_open(entry.ticker, entry.usd)
+            order_id, status = broker_mod.place_market_on_open(
+                entry.ticker, entry.usd, day=entry.date, intent_id=entry.intent_id
+            )
         elif cfg.order_style == "twap_30m":
-            order_id, status = broker_mod.place_twap(entry.ticker, entry.usd, minutes=30)
+            order_id, status = broker_mod.place_twap(
+                entry.ticker, entry.usd, minutes=30, day=entry.date, intent_id=entry.intent_id
+            )
         elif cfg.order_style == "limit_vwap":
-            order_id, status = broker_mod.place_limit_vwap(entry.ticker, entry.usd)
+            order_id, status = broker_mod.place_limit_vwap(
+                entry.ticker, entry.usd, day=entry.date, intent_id=entry.intent_id
+            )
         else:  # pragma: no cover
             raise ValueError(f"unknown order_style {cfg.order_style}")
 
-        if len(ledger.entries) > before:
-            ledger.entries.pop()
-        entry.order_id = order_id
-        entry.status = status
-        entry.scheduled_at = None
         if obs is not None:
             obs.report_stable_sweep(entry.usd)
             if status == "filled":
@@ -269,16 +265,17 @@ def perform_sweep(
         return
     blocked, _ = should_block_sweep(day, obs)
     if blocked:
-        entry = ledger.entries[-1]
+        entry = ledger.entries()[-1]
         _append_report(day, net_pnl, 0.0, cfg.ticker, entry.status, entry.order_id)
         if obs is not None:
             obs.report_stable_sweep(0.0)
             obs.increment_stable_blocked()
         return
     place_or_schedule(day, amount, cfg)
-    if not ledger.entries:
+    entries = ledger.entries()
+    if not entries:
         return
-    entry = ledger.entries[-1]
+    entry = entries[-1]
     _append_report(day, net_pnl, amount, cfg.ticker, entry.status, entry.order_id)
     if obs is not None:
         obs.report_stable_sweep(amount)
