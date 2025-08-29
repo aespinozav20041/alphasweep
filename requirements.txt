@@ -1,6 +1,7 @@
 pandas
 pandas-market-calendars
 numpy
+scikit-learn
 pyarrow
 fastparquet
 numba

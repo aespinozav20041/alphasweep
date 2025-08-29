@@ -59,6 +59,16 @@ class ModelRegistry:
             )
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS model_oos(
+                model_id INTEGER,
+                ts INTEGER,
+                params_json TEXT,
+                metrics_json TEXT
+            )
+            """
+        )
         self.conn.commit()
 
     # ------------------------------------------------------------------
@@ -105,6 +115,38 @@ class ModelRegistry:
                 (model_id, ts, ret, sharpe),
             )
             self.conn.commit()
+
+    def log_oos_metrics(
+        self,
+        model_id: int,
+        *,
+        params: Dict,
+        metrics: Dict,
+        ts: Optional[int] = None,
+    ) -> None:
+        """Record out-of-sample metrics and parameters for a model."""
+
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO model_oos(model_id, ts, params_json, metrics_json)
+                VALUES(?,?,?,?)
+                """,
+                (model_id, ts, json.dumps(params), json.dumps(metrics)),
+            )
+            self.conn.commit()
+
+    def list_oos_metrics(self, model_id: int) -> List[Dict]:
+        """List logged out-of-sample metrics for a model."""
+
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "SELECT * FROM model_oos WHERE model_id=? ORDER BY ts",
+                (model_id,),
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     def promote_model(self, model_id: int, export_dir: str) -> None:
         """Promote a model to champion and export its artifacts."""
