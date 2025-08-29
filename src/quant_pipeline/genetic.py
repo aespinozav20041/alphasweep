@@ -42,6 +42,7 @@ class GeneticOptimizer:
         population_size: int = 10,
         mutation_rate: float = 0.1,
         crossover_rate: float = 0.5,
+        tournament_size: int = 3,
         rng: np.random.Generator | None = None,
     ) -> None:
         self.fitness_fn = fitness_fn
@@ -49,6 +50,7 @@ class GeneticOptimizer:
         self.population_size = population_size
         self.mutation_rate = mutation_rate
         self.crossover_rate = crossover_rate
+        self.tournament_size = tournament_size
         self.rng = rng or np.random.default_rng()
 
         if self.bounds.ndim != 2 or self.bounds.shape[1] != 2:
@@ -71,15 +73,28 @@ class GeneticOptimizer:
     # ------------------------------------------------------------------
     def _crossover(self, a: np.ndarray, b: np.ndarray) -> np.ndarray:
         if self.rng.random() < self.crossover_rate:
-            point = self.rng.integers(1, len(a))
-            child = np.concatenate([a[:point], b[point:]])
+            mix = self.rng.random(a.shape)
+            child = mix * a + (1 - mix) * b
         else:
             child = a.copy()
-        return child
+        return np.clip(child, self.bounds[:, 0], self.bounds[:, 1])
 
     # ------------------------------------------------------------------
-    def optimise(self, generations: int = 10) -> tuple[np.ndarray, float]:
-        """Run the genetic optimisation and return the best individual."""
+    def _tournament(self, fitness: np.ndarray) -> int:
+        idx = self.rng.choice(self.population_size, size=self.tournament_size, replace=False)
+        best = idx[np.argmax(fitness[idx])]
+        return int(best)
+
+    # ------------------------------------------------------------------
+    def optimise(
+        self, generations: int = 10, *, patience: int | None = None
+    ) -> tuple[np.ndarray, float]:
+        """Run the genetic optimisation and return the best individual.
+
+        ``patience`` controls early stopping via successive halving.  After an
+        improvement the patience counter is halved, and when it reaches zero the
+        optimisation stops.
+        """
 
         population = self._initial_population()
         fitness = np.array([self.fitness_fn(ind) for ind in population])
@@ -87,25 +102,20 @@ class GeneticOptimizer:
         best_idx = int(np.argmax(fitness))
         best = population[best_idx].copy()
         best_fit = float(fitness[best_idx])
+        remaining = patience
 
         for _ in range(generations):
-            # Roulette wheel selection
-            adj = fitness - fitness.min()
-            if adj.sum() == 0:
-                probs = np.ones_like(adj) / len(adj)
-            else:
-                probs = adj / adj.sum()
-            parent_idx = self.rng.choice(
-                self.population_size, size=(self.population_size, 2), p=probs
-            )
+            parent_pairs = [
+                (self._tournament(fitness), self._tournament(fitness))
+                for _ in range(self.population_size)
+            ]
 
             children = []
-            for idx_a, idx_b in parent_idx:
+            for idx_a, idx_b in parent_pairs:
                 a = population[idx_a]
                 b = population[idx_b]
                 child = self._crossover(a, b)
                 child = self._mutate(child)
-                child = np.clip(child, self.bounds[:, 0], self.bounds[:, 1])
                 children.append(child)
 
             population = np.asarray(children)
@@ -115,6 +125,12 @@ class GeneticOptimizer:
             if fitness[gen_idx] > best_fit:
                 best_fit = float(fitness[gen_idx])
                 best = population[gen_idx].copy()
+                if remaining is not None:
+                    remaining = max(1, remaining // 2)
+            elif remaining is not None:
+                remaining -= 1
+                if remaining <= 0:
+                    break
 
         return best, best_fit
 
