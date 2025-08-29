@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Callable
 
 import ccxt
 import pandas as pd
@@ -135,6 +135,78 @@ def ingest_ohlcv_ccxt(
         _set_watermark(conn, exchange, canon_sym, timeframe, int(out_df["timestamp"].max()))
 
     conn.close()
+
+
+def ingest_orderbook(
+    fetcher: Callable[[str, str, Optional[int], Optional[int]], pd.DataFrame],
+    symbols: Iterable[str],
+    *,
+    timeframe: str = "1s",
+    start: Optional[int] = None,
+    end: Optional[int] = None,
+    out: Path = Path(__file__).resolve().parents[2] / "lake",
+) -> None:
+    """Ingest best bid/ask snapshots from ``fetcher`` and persist."""
+
+    frames = []
+    for sym in symbols:
+        df = fetcher(sym, timeframe=timeframe, start=start, end=end)
+        required = {
+            "timestamp",
+            "bid1",
+            "ask1",
+            "bid_sz1",
+            "ask_sz1",
+            "trades_buy_vol",
+            "trades_sell_vol",
+        }
+        if not required.issubset(df.columns):
+            raise ValueError(f"missing columns: {required - set(df.columns)}")
+        df = df.astype(
+            {
+                "timestamp": "int64",
+                "bid1": "float64",
+                "ask1": "float64",
+                "bid_sz1": "float64",
+                "ask_sz1": "float64",
+                "trades_buy_vol": "float64",
+                "trades_sell_vol": "float64",
+            }
+        )
+        df["symbol"] = sym.replace("/", "-")
+        df["source"] = getattr(fetcher, "__name__", "adapter")
+        df["timeframe"] = timeframe
+        frames.append(df)
+
+    if not frames:
+        return
+    out_df = pd.concat(frames, ignore_index=True)
+    out_df = out_df.drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
+    if not out_df["timestamp"].is_monotonic_increasing:
+        raise ValueError("timestamps not monotonic")
+    to_parquet(out_df, "orderbook_best", base_path=out)
+
+
+def ingest_news(
+    provider: str,
+    symbols: Iterable[str],
+    *,
+    start: Optional[int] = None,
+    end: Optional[int] = None,
+    timeframe: str = "1h",
+    out: Path = Path(__file__).resolve().parents[2] / "lake",
+) -> None:
+    """Fetch news/sentiment data and store in the lake."""
+
+    df = fetch_news_sentiment(provider, symbols, start=start, end=end)
+    if df.empty:
+        return
+    df = df.astype({"timestamp": "int64", "sentiment": "float64"})
+    df["symbol"] = df["symbol"].str.replace("/", "-")
+    df["source"] = provider
+    df["timeframe"] = timeframe
+    df = df.drop_duplicates(subset=["timestamp", "symbol"]).sort_values("timestamp")
+    to_parquet(df, "news", base_path=out)
 
 
 def fetch_news_sentiment(
@@ -277,5 +349,11 @@ def combine_market_data(
     return base.reset_index()
 
 
-__all__ = ["ingest_ohlcv_ccxt", "fetch_news_sentiment", "combine_market_data"]
+__all__ = [
+    "ingest_ohlcv_ccxt",
+    "ingest_orderbook",
+    "ingest_news",
+    "fetch_news_sentiment",
+    "combine_market_data",
+]
 

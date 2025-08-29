@@ -5,7 +5,7 @@ from typing import Iterable, Optional, Sequence, Type
 
 import pandas as pd
 
-from .models import BarOHLCV, OrderBookBest, PerpMetrics
+from .models import BarOHLCV, OrderBookBest, PerpMetrics, NewsSentiment
 
 # Base directory for lake storage
 LAKE_PATH = Path(__file__).resolve().parents[2] / "lake"
@@ -18,6 +18,7 @@ SCHEMAS = {
     "bar_ohlcv": BarOHLCV,
     "orderbook_best": OrderBookBest,
     "perp_metrics": PerpMetrics,
+    "news": NewsSentiment,
 }
 
 

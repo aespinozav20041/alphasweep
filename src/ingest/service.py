@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Optional
 
 from quant_pipeline.doctor import validate_ohlcv
-from quant_pipeline.ingest import ingest_ohlcv_ccxt
+from quant_pipeline.ingest import ingest_ohlcv_ccxt, ingest_orderbook, ingest_news
 from quant_pipeline.observability import Observability
 from quant_pipeline.storage import read_table
 
@@ -82,6 +82,91 @@ class IngestService:
             self.obs.report_duplicate_ratio(canon, dup_ratio)
 
         latency_ms = (time.time() - start) * 1000.0
+        self.obs.observe_latency(latency_ms)
+
+    def ingest_orderbook(
+        self,
+        fetcher: Callable[[str, str, Optional[int], Optional[int]], "pd.DataFrame"],
+        symbols: Iterable[str],
+        *,
+        timeframe: str = "1s",
+        since: Optional[int] = None,
+        until: Optional[int] = None,
+    ) -> None:
+        """Ingest order book snapshots using ``fetcher`` adapter."""
+
+        start = time.time()
+        ingest_orderbook(
+            fetcher,
+            symbols,
+            timeframe=timeframe,
+            start=since,
+            end=until,
+            out=self.lake_path,
+        )
+        end_ts = until or int(time.time() * 1000)
+
+        for sym in symbols:
+            canon = sym.replace("/", "-")
+            df = read_table(
+                "orderbook_best",
+                symbols=[canon],
+                start=since or 0,
+                end=end_ts,
+                timeframe=timeframe,
+                base_path=self.lake_path,
+            )
+            if not df["timestamp"].is_monotonic_increasing:
+                raise ValueError("timestamps not monotonic")
+            depth_missing = (
+                (df["bid_sz1"] <= 0) | (df["ask_sz1"] <= 0)
+            ).sum()
+            depth_ratio = depth_missing / max(len(df), 1)
+            dup_ratio = df["timestamp"].duplicated().sum() / len(df)
+            self.obs.report_missing_bars(canon, timeframe, depth_ratio)
+            self.obs.report_duplicate_ratio(canon, dup_ratio)
+
+        latency_ms = (time.time() - start) * 1000.0
+        self.obs.observe_latency(latency_ms)
+
+    def ingest_news(
+        self,
+        provider: str,
+        symbols: Iterable[str],
+        *,
+        timeframe: str = "1h",
+        start: Optional[int] = None,
+        end: Optional[int] = None,
+    ) -> None:
+        """Ingest news/sentiment data from ``provider``."""
+
+        start_ts = time.time()
+        ingest_news(
+            provider,
+            symbols,
+            start=start,
+            end=end,
+            timeframe=timeframe,
+            out=self.lake_path,
+        )
+        end_ts = end or int(time.time() * 1000)
+
+        for sym in symbols:
+            canon = sym.replace("/", "-")
+            df = read_table(
+                "news",
+                symbols=[canon],
+                start=start or 0,
+                end=end_ts,
+                timeframe=timeframe,
+                base_path=self.lake_path,
+            )
+            if not df["timestamp"].is_monotonic_increasing:
+                raise ValueError("timestamps not monotonic")
+            dup_ratio = df["timestamp"].duplicated().sum() / len(df)
+            self.obs.report_duplicate_ratio(canon, dup_ratio)
+
+        latency_ms = (time.time() - start_ts) * 1000.0
         self.obs.observe_latency(latency_ms)
 
 
