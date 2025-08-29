@@ -50,6 +50,11 @@ class TradingEngine:
         }
         order_id = self.execution_client.send(order, symbol_state)
         self.risk_manager.post_trade(order, self.execution_client.positions())
+=======
+        order = self.risk_manager.limit_order(order)
+        order_id = self.execution_client.send(order)
+        atr = getattr(market_data, "atr", None)
+        self.risk_manager.post_trade(order, self.execution_client.positions(), atr=atr)
         return order_id
 
     # Convenience aliases ------------------------------------------------
