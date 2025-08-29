@@ -24,6 +24,15 @@ Partitioning: `lake/{exchange}/{symbol}/{timeframe}/YYYY/MM/DD.parquet`
 
 Partitioning: same as raw OHLCV.
 
+## News Sentiment Signals
+| Column    | Type  | Description                                      |
+|-----------|-------|--------------------------------------------------|
+| timestamp | int64 | milliseconds since Unix epoch UTC                |
+| symbol    | string| instrument symbol                                |
+| sentiment | float | normalized news sentiment score in [-1, 1]       |
+
+Partitioning: `lake/news/{symbol}/YYYY/MM/DD.parquet`
+
 ## Model Registry (SQLite)
 ### models
 | Column       | Type    | Description                           |

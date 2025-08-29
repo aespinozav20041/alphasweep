@@ -21,9 +21,19 @@ def test_combine_market_data_resample_and_adjustments():
     macro = pd.DataFrame(
         [[base, 1], [base + 30 * 60 * 1000, 2]], columns=["timestamp", "macro"]
     )
+    news = pd.DataFrame(
+        [[base, 0.1], [base + 30 * 60 * 1000, -0.2]],
+        columns=["timestamp", "sentiment"],
+    )
 
     combined = combine_market_data(
-        ohlcv, l2=l2, corporate=corporate, macro=macro, tz="UTC", resample_rule="1h"
+        ohlcv,
+        l2=l2,
+        corporate=corporate,
+        macro=macro,
+        news=news,
+        tz="UTC",
+        resample_rule="1h",
     )
 
     assert len(combined) == 1
@@ -35,3 +45,4 @@ def test_combine_market_data_resample_and_adjustments():
     assert row.volume == 250
     assert row.bid == 1.25 and row.ask == 2.25
     assert row.macro == 2
+    assert row.sentiment == -0.2

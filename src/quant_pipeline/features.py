@@ -58,8 +58,10 @@ class FeatureBuilder:
     """Stateful feature builder operating on streaming bars.
 
     The builder keeps track of the previous close to compute returns for new
-    bars on the fly. Each call to :meth:`update` returns a dataframe with the
-    freshly created features for the provided bar.
+    bars on the fly. Additional numeric fields present in the input ``bar``
+    (e.g. news ``sentiment`` scores) are forwarded unchanged. Each call to
+    :meth:`update` returns a dataframe with the freshly created features for
+    the provided bar.
     """
 
     def __init__(self) -> None:
@@ -70,7 +72,11 @@ class FeatureBuilder:
         ts = int(bar["timestamp"])
         ret = 0.0 if self._last_close is None else close / self._last_close - 1.0
         self._last_close = close
-        return pd.DataFrame([{ "timestamp": ts, "ret": ret }])
+        out = {"timestamp": ts, "ret": ret}
+        for key, val in bar.items():
+            if key not in {"timestamp", "close"}:
+                out[key] = val
+        return pd.DataFrame([out])
 
 
 class Scaler:
