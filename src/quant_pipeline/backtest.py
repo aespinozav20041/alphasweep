@@ -18,10 +18,11 @@ import pandas as pd
 GENE_NAMES = [
     "n_layers",
     "hidden_size",
-    "seq_len",
-    "lr",
     "dropout",
+    "seq_len",
     "horizon",
+    "lr",
+    "weight_decay",
 ]
 
 
@@ -78,6 +79,7 @@ def run_backtest(
     threshold: float = 0.0,
     ema_alpha: float = 0.0,
     cooldown: int = 0,
+    turnover_penalty: float = 0.0,
 ) -> float:
     """Run a simple backtest using optional gene parameters.
 
@@ -86,13 +88,15 @@ def run_backtest(
     df:
         Must contain a ``ret`` column representing returns.
     genes:
-        Sequence of six values representing ``n_layers``, ``hidden_size``,
-        ``seq_len``, ``lr``, ``dropout`` and forecast horizon ``horizon``.  The
-        numeric values are primarily placeholders but allow optimisers to tune
-        hyper-parameters.
+        Sequence of seven values representing ``n_layers``, ``hidden_size``,
+        ``dropout``, ``seq_len``, forecast horizon ``horizon``, learning rate
+        ``lr`` and ``weight_decay``. The numeric values are primarily
+        placeholders but allow optimisers to tune hyper-parameters.
     threshold, ema_alpha, cooldown:
         Post-processing rules applied to the raw signal when computing the
         fitness of a gene vector.
+    turnover_penalty:
+        Penalty applied per position change to discourage excessive turnover.
 
     Returns
     -------
@@ -118,6 +122,9 @@ def run_backtest(
         raw_signal, threshold=threshold, ema_alpha=ema_alpha, cooldown=cooldown
     )
     pnl = (signal.shift().fillna(0) * df["ret"]).cumsum().iloc[-1]
+    if turnover_penalty > 0:
+        turns = (signal != signal.shift()).sum()
+        pnl -= turnover_penalty * float(turns)
     return float(pnl)
 
 
