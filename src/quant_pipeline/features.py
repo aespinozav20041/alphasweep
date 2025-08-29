@@ -2,19 +2,39 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 
-def build_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Create simple features for training and backtesting.
+def build_features(df: pd.DataFrame, vol_window: int = 10) -> pd.DataFrame:
+    """Create engineered features for training and backtesting.
 
-    Currently this only computes simple returns but can be extended with more
-    complex indicators. The input ``df`` must already be validated by
-    :func:`quant_pipeline.doctor.validate_ohlcv`.
+    Parameters
+    ----------
+    df:
+        Input OHLCV dataframe validated by
+        :func:`quant_pipeline.doctor.validate_ohlcv`.
+    vol_window:
+        Window size used for the rolling volatility indicator.
     """
 
     out = df.copy().sort_values("timestamp").reset_index(drop=True)
+
+    # Returns
     out["ret"] = out["close"].pct_change().fillna(0.0)
+
+    # Volatility indicator using rolling standard deviation of returns.
+    out["vol"] = out["ret"].rolling(vol_window, min_periods=1).std().fillna(0.0)
+
+    # Price based spreads.
+    out["hl_spread"] = (out["high"] - out["low"]) / out["close"]
+    out["oc_spread"] = (out["close"] - out["open"]) / out["open"]
+
+    # Simple microstructure proxy: position of the close within the bar range.
+    rng = out["high"] - out["low"]
+    out["pos_in_range"] = (out["close"] - out["low"]) / rng.replace({0.0: np.nan})
+    out["pos_in_range"] = out["pos_in_range"].fillna(0.0)
+
     return out
 
 
@@ -75,4 +95,45 @@ class Scaler:
         return (self.M2 / (self.n - 1)).pow(0.5)
 
 
-__all__ = ["build_features", "FeatureBuilder", "Scaler"]
+def causal_normalize(df: pd.DataFrame, limit: int | None = None) -> pd.DataFrame:
+    """Causally z-score normalise a dataframe.
+
+    The statistics used for normalisation only consider past values to avoid
+    look-ahead bias. Missing values are forward filled up to ``limit`` steps to
+    retain continuity without leaking too far into the future.
+    """
+
+    filled = df.ffill(limit=limit)
+    mean = filled.expanding(min_periods=1).mean().shift().fillna(0.0)
+    std = (
+        filled.expanding(min_periods=1).std().shift().fillna(1.0).replace({0.0: 1.0})
+    )
+    normalised = (filled - mean) / std
+    return normalised.fillna(0.0)
+
+
+def sliding_window_tensor(
+    df: pd.DataFrame, seq_len: int, *, stride: int = 1
+) -> np.ndarray:
+    """Generate sliding window tensors for LSTM training.
+
+    Returns an array with shape ``[batch, seq_len, n_features]`` where ``batch``
+    is the number of windows extracted from the dataframe using the provided
+    ``seq_len`` and ``stride``.
+    """
+
+    data = df.to_numpy()
+    if len(data) < seq_len:
+        return np.empty((0, seq_len, data.shape[1]))
+
+    windows = [data[i : i + seq_len] for i in range(0, len(data) - seq_len + 1, stride)]
+    return np.stack(windows, axis=0)
+
+
+__all__ = [
+    "build_features",
+    "FeatureBuilder",
+    "Scaler",
+    "causal_normalize",
+    "sliding_window_tensor",
+]
