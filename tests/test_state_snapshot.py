@@ -20,7 +20,7 @@ class DummyExchange:
 
 
 def make_loop(path):
-    model = SimpleLSTM()
+    model = SimpleLSTM(input_size=6)
     risk = RiskManager(
         max_dd_daily=1.0,
         max_dd_weekly=1.0,

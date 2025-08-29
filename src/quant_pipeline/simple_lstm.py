@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 import torch
 from torch import Tensor, nn
@@ -26,7 +27,9 @@ class SimpleLSTM(nn.Module):
         hidden_size: int = 4,
     ) -> None:
         super().__init__()
-        self.lstm = nn.LSTM(input_size=input_size, hidden_size=hidden_size, batch_first=True)
+        self.lstm = nn.LSTM(
+            input_size=input_size, hidden_size=hidden_size, batch_first=True
+        )
         self.fc = nn.Linear(hidden_size, 1)
         self.hidden: Optional[tuple[Tensor, Tensor]] = None
         for name, param in self.lstm.named_parameters():
@@ -58,7 +61,7 @@ class SimpleLSTM(nn.Module):
         Parameters
         ----------
         feats:
-            DataFrame containing a ``ret`` column with sequential returns.
+            DataFrame containing a ``ret`` column and additional features.
         epochs:
             Number of optimisation epochs.
         lr:
@@ -68,12 +71,12 @@ class SimpleLSTM(nn.Module):
         if "ret" not in feats:
             raise ValueError("missing 'ret' column")
 
-        series = torch.tensor(feats["ret"].values, dtype=torch.float32)
-        if len(series) < 2:
+        data = torch.tensor(feats.values, dtype=torch.float32)
+        if len(data) < 2:
             raise ValueError("need at least two observations to train")
 
-        x = series[:-1].view(1, -1, 1)
-        y = series[1:].view(1, -1, 1)
+        x = data[:-1].unsqueeze(0)
+        y = data[1:, [feats.columns.get_loc("ret")]].unsqueeze(0)
 
         optim = torch.optim.Adam(self.parameters(), lr=lr)
         loss_fn = nn.MSELoss()
@@ -94,16 +97,17 @@ class SimpleLSTM(nn.Module):
         # reset hidden state so future predictions start fresh
         self.hidden = None
 
-    def predict(self, feats: pd.DataFrame) -> list[float]:
-        """Generate prediction for the last row in ``feats``."""
+    def predict(self, feats: pd.DataFrame | np.ndarray) -> list[float]:
+        """Generate prediction for a window of features."""
 
-        if "ret" not in feats:
-            raise ValueError("missing 'ret' column")
-
-        x = torch.tensor([feats.iloc[-1]["ret"]], dtype=torch.float32).view(1, 1, 1)
+        if isinstance(feats, pd.DataFrame):
+            arr = feats.to_numpy(dtype=float)
+        else:
+            arr = np.asarray(feats, dtype=float)
+        x = torch.tensor(arr, dtype=torch.float32).unsqueeze(0)
         with torch.no_grad():
             out, self.hidden = self.lstm(x, self.hidden)
-            pred = self.fc(out)
+            pred = self.fc(out[:, -1, :])
 
         # detach hidden state so it can be serialised
         if isinstance(self.hidden, tuple):
