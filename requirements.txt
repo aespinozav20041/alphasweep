@@ -17,3 +17,5 @@ prometheus-client
 uvicorn
 httpx
 pytest
+ib-insync
+alpaca-trade-api
