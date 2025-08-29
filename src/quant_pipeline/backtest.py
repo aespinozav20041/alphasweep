@@ -1,3 +1,4 @@
+
 """Lightweight backtesting helpers used for tests.
 
 This module contains a small, dependency free backtester that is intentionally
@@ -7,6 +8,15 @@ encoded as genes.  These genes represent the configuration of a simple LSTM
 model used for signal generation.  A full implementation of the model training
 is outside the scope of the exercises, but the backtester accepts the gene
 vector so that optimisers can explore the search space.
+=======
+"""Lightweight backtester with optional cost modelling.
+
+This module provides a very small backtesting utility used throughout the test
+suite.  It supports a handful of hyper-parameters encoded as *genes* so that
+optimisers can explore different model configurations.  The implementation here
+is intentionally simple yet exposes hooks for common trading frictions such as
+spreads, volume based costs, latency and slippage.
+
 """
 
 from __future__ import annotations
@@ -37,26 +47,11 @@ def _apply_postprocess(
     ema_alpha: float,
     cooldown: int,
 ) -> pd.Series:
-    """Apply post-processing trading rules to a raw signal.
-
-    The rules implemented are very small proxies of what a production
-    environment might use:
-
-    ``threshold``
-        Only take a long position if the signal is above this threshold and a
-        short position otherwise.
-    ``ema_alpha``
-        If greater than zero, apply exponential moving average smoothing with
-        the provided ``alpha`` parameter.
-    ``cooldown``
-        Number of bars to wait after a position change before another change is
-        allowed.
-    """
+    """Apply simple post-processing rules to a raw trading signal."""
 
     if ema_alpha > 0:
         signal = signal.ewm(alpha=ema_alpha, adjust=False).mean()
 
-    # Convert to directional signal based on threshold.
     processed = (signal > threshold).astype(int) * 2 - 1
 
     if cooldown > 0:
@@ -80,9 +75,15 @@ def run_backtest(
     df: pd.DataFrame,
     genes: Sequence[float] | None = None,
     *,
+
     threshold: float | None = None,
     ema_alpha: float | None = None,
     cooldown: int | None = None,
+=======
+    threshold: float = 0.0,
+    ema_alpha: float = 0.0,
+    cooldown: int = 0,
+
     turnover_penalty: float = 0.0,
     spread_col: str | None = "spread",
     volume_col: str | None = "volume",
@@ -93,6 +94,7 @@ def run_backtest(
     return_metrics: bool = False,
     rng: np.random.Generator | None = None,
 ) -> float | dict[str, float]:
+
     """Run a simple backtest using optional gene parameters.
 
     Parameters
@@ -117,6 +119,30 @@ def run_backtest(
         The cumulative return of the strategy after post-processing or,
         when ``return_metrics`` is ``True``, a dictionary containing
         ``pnl``, ``calmar``, ``max_drawdown`` and ``turnover``.
+=======
+    """Run a tiny backtest using optional gene parameters.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Must contain a ``ret`` column with returns.
+    genes : sequence of float, optional
+        Vector of seven hyper-parameters as defined in ``GENE_NAMES``.
+    threshold, ema_alpha, cooldown : float / int
+        Post-processing rules applied to the raw signal.
+    turnover_penalty : float
+        Penalty applied per position change.
+    spread_col, volume_col : str, optional
+        Column names used to pull spread and volume information.
+    volume_cost, slippage : float
+        Transaction cost parameters.
+    order_latency, network_latency : int
+        Delays applied to the execution signal.
+    return_metrics : bool
+        When ``True`` return rich metrics instead of just PnL.
+    rng : numpy.random.Generator, optional
+        Random number generator used for slippage simulation.
+
     """
 
     if "ret" not in df.columns:
@@ -131,25 +157,22 @@ def run_backtest(
     ema = ema_alpha if ema_alpha is not None else float(params.get("ema_alpha", 0.0))
     cd = cooldown if cooldown is not None else int(params.get("cooldown", 0))
 
-    # In lieu of training an actual model, use future returns as a proxy for a
-    # predictive signal so that the optimisation infrastructure has something to
-    # operate on. ``horizon`` defines how many steps ahead the signal should
-    # look.
     raw_signal = df["ret"].shift(-horizon).fillna(0)
 
     signal = _apply_postprocess(raw_signal, threshold=thr, ema_alpha=ema, cooldown=cd)
+=======
+    signal = _apply_postprocess(
+        raw_signal, threshold=threshold, ema_alpha=ema_alpha, cooldown=cooldown
+    )
 
-    # Simulate latency from order queues and network/broker delays.
+
     total_latency = max(order_latency, 0) + max(network_latency, 0)
-    if total_latency > 0:
-        exec_signal = signal.shift(total_latency).fillna(0)
-    else:
-        exec_signal = signal
+    exec_signal = signal.shift(total_latency).fillna(0) if total_latency > 0 else signal
 
     trades = exec_signal.diff().abs().fillna(exec_signal.abs())
     spread = df[spread_col] if spread_col and spread_col in df.columns else 0
     volume = df[volume_col] if volume_col and volume_col in df.columns else 1
-    cost = trades * (spread + volume_cost / volume)
+    cost = trades * (spread + volume_cost / volume + turnover_penalty)
 
     if slippage > 0:
         if rng is None:
