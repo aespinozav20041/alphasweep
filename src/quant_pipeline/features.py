@@ -2,19 +2,55 @@
 
 from __future__ import annotations
 
+from typing import Iterable, Sequence
+
+import numpy as np
 import pandas as pd
+from sklearn.preprocessing import StandardScaler
 
 
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Create simple features for training and backtesting.
+    """Create feature set for training and backtesting.
 
-    Currently this only computes simple returns but can be extended with more
-    complex indicators. The input ``df`` must already be validated by
-    :func:`quant_pipeline.doctor.validate_ohlcv`.
+    The input ``df`` must already be validated by
+    :func:`quant_pipeline.doctor.validate_ohlcv` and may optionally contain
+    orderbook/trade statistics.  Besides simple returns this function adds
+    volatility, spread and microstructure indicators when the necessary columns
+    are present.
     """
 
     out = df.copy().sort_values("timestamp").reset_index(drop=True)
+
+    # Basic return and volatility features
     out["ret"] = out["close"].pct_change().fillna(0.0)
+    out["volatility"] = (
+        out["ret"].rolling(window=20, min_periods=1).std().fillna(0.0)
+    )
+
+    # Spread indicators from order book or high/low fallback
+    if {"bid1", "ask1"}.issubset(out.columns):
+        out["spread"] = out["ask1"] - out["bid1"]
+        out["mid_price"] = (out["ask1"] + out["bid1"]) / 2.0
+    else:
+        out["spread"] = out["high"] - out["low"]
+        out["mid_price"] = out["close"]
+
+    # Order book imbalance as microstructure feature
+    if {"bid_sz1", "ask_sz1"}.issubset(out.columns):
+        denom = (out["bid_sz1"] + out["ask_sz1"]).replace(0, np.nan)
+        out["ob_imbalance"] = ((out["bid_sz1"] - out["ask_sz1"]) / denom).fillna(0.0)
+    else:
+        out["ob_imbalance"] = 0.0
+
+    # Trade imbalance if trade volumes available
+    if {"trades_buy_vol", "trades_sell_vol"}.issubset(out.columns):
+        denom = (out["trades_buy_vol"] + out["trades_sell_vol"]).replace(0, np.nan)
+        out["trade_imbalance"] = (
+            (out["trades_buy_vol"] - out["trades_sell_vol"]) / denom
+        ).fillna(0.0)
+    else:
+        out["trade_imbalance"] = 0.0
+
     return out
 
 
@@ -75,4 +111,66 @@ class Scaler:
         return (self.M2 / (self.n - 1)).pow(0.5)
 
 
-__all__ = ["build_features", "FeatureBuilder", "Scaler"]
+def normalize_train_only(
+    train: pd.DataFrame,
+    test: pd.DataFrame | None = None,
+    *,
+    columns: Sequence[str] | None = None,
+    ffill_limit: int | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame | None, StandardScaler]:
+    """Fit ``StandardScaler`` on ``train`` and transform both ``train`` and ``test``.
+
+    Missing values are forward filled with a configurable limit after
+    transformation.  Only the columns provided in ``columns`` are scaled.
+
+    Returns the transformed ``train`` and ``test`` dataframes together with the
+    fitted scaler instance.
+    """
+
+    cols = list(columns) if columns is not None else list(train.columns)
+
+    # Forward fill training data prior to fitting to avoid NaNs affecting the
+    # statistics. The same limit is applied as during transformation.
+    train_ffill = (
+        train[cols].ffill(limit=ffill_limit) if ffill_limit is not None else train[cols].ffill()
+    )
+    scaler = StandardScaler().fit(train_ffill)
+
+    def _transform(df: pd.DataFrame) -> pd.DataFrame:
+        out = df.copy()
+        out[cols] = (
+            df[cols].ffill(limit=ffill_limit)
+            if ffill_limit is not None
+            else df[cols].ffill()
+        )
+        out[cols] = scaler.transform(out[cols])
+        return out
+
+    train_scaled = _transform(train)
+    test_scaled = _transform(test) if test is not None else None
+    return train_scaled, test_scaled, scaler
+
+
+def sliding_window_tensor(
+    df: pd.DataFrame, seq_len: int, features: Iterable[str]
+) -> np.ndarray:
+    """Generate ``[batch, seq_len, n_features]`` tensor using sliding windows."""
+
+    cols = list(features)
+    arr = df[cols].to_numpy(dtype=float)
+    if seq_len <= 0:
+        raise ValueError("seq_len must be positive")
+    n = len(arr) - seq_len + 1
+    if n <= 0:
+        raise ValueError("not enough rows for the requested sequence length")
+    windows = [arr[i : i + seq_len] for i in range(n)]
+    return np.stack(windows)
+
+
+__all__ = [
+    "build_features",
+    "FeatureBuilder",
+    "Scaler",
+    "normalize_train_only",
+    "sliding_window_tensor",
+]
