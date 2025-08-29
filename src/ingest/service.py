@@ -16,7 +16,11 @@ from quant_pipeline.ingest import (
     ingest_news,
 )
 from quant_pipeline.observability import Observability
+from quant_pipeline.storage import read_table
+from quant_pipeline.utils import resample_ohlcv
+=======
 from quant_pipeline.storage import read_table, to_parquet
+
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +84,7 @@ class IngestService:
                 timeframe=timeframe,
                 base_path=self.lake_path,
             )
+            df = resample_ohlcv(df, timeframe)
             validated = validate_ohlcv(df, tf_ms)
             diffs = validated["timestamp"].diff().dropna()
             missing = (diffs > tf_ms).sum()
