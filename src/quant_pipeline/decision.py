@@ -36,7 +36,9 @@ class DecisionLoop:
         self.cooldown = cooldown
         self._ema = 0.0
         self._cooldown = 0
+        # current filled positions per symbol
         self.position: Dict[str, float] = {}
+        # feature engineering utilities operating in streaming mode
         self.fb = FeatureBuilder()
         self.scaler = Scaler()
 
@@ -80,11 +82,27 @@ class DecisionLoop:
                 price=price,
                 client_id=cid,
             )
-            self.position[symbol] = target
             self.obs.increment_orders_sent()
         except Exception:  # pragma: no cover - logging
             logger.exception("order submission failed")
             self.obs.increment_order_errors()
+
+    def on_fill(self, order_id: str, qty: float, price: float) -> None:
+        """Handle fill events updating position and slippage metric."""
+
+        order = self.oms._by_order_id(order_id)
+        self.oms.handle_fill(order_id, qty)
+        if order is None:
+            return
+        sign = 1 if order.side == "buy" else -1
+        self.position[order.symbol] = self.position.get(order.symbol, 0.0) + sign * qty
+        bps = (price - order.price) / order.price * 1e4 * sign
+        self.obs.observe_slippage(bps)
+
+    def reconcile(self) -> None:
+        """Delegate reconciliation to OMS."""
+
+        self.oms.reconcile()
 
 
 __all__ = ["DecisionLoop"]
