@@ -14,7 +14,7 @@ import pandas as pd
 from .genetic import GeneticOptimizer
 
 from .model_registry import ModelRegistry
-from .labels import triple_barrier
+from .labeling import forward_return, triple_barrier_labels
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,8 @@ class AutoTrainer:
         ga_generations: int = 10,
         ga_population: int = 10,
         ga_rng: np.random.Generator | None = None,
+=======
+        label_type: str = "triple_barrier",
     ) -> None:
         self.registry = registry
         self.train_every_bars = train_every_bars
@@ -51,11 +53,15 @@ class AutoTrainer:
         self.label_horizon = label_horizon
         self.label_up_mult = label_up_mult
         self.label_down_mult = label_down_mult
+
         self.gene_bounds = gene_bounds
         self.fitness_fn = fitness_fn
         self.ga_generations = ga_generations
         self.ga_population = ga_population
         self.ga_rng = ga_rng
+=======
+        self.label_type = label_type
+
         self._bar_count = 0
         self._event = threading.Event()
         self._stop = threading.Event()
@@ -100,13 +106,8 @@ class AutoTrainer:
             self.label_horizon is not None
             and isinstance(dataset, pd.DataFrame)
         ):
-            labels = triple_barrier(
-                dataset,
-                self.label_horizon,
-                self.label_up_mult,
-                self.label_down_mult,
-            )
             dataset = dataset.copy()
+
             dataset["label"] = labels
         if self.gene_bounds:
             def _ga_train(genes: Sequence[float]) -> float:
@@ -142,6 +143,21 @@ class AutoTrainer:
             opt.optimise(generations=self.ga_generations)
             self.registry.prune_challengers(self.max_challengers)
             return
+=======
+            if self.label_type == "forward_return":
+                dataset["label"] = forward_return(
+                    dataset, self.label_horizon
+                )
+            elif self.label_type == "triple_barrier":
+                dataset["label"] = triple_barrier_labels(
+                    dataset,
+                    self.label_up_mult,
+                    self.label_down_mult,
+                    self.label_horizon,
+                )
+            else:
+                raise ValueError(f"unknown label_type {self.label_type}")
+
 
         def _train() -> Dict[str, str]:
             return self.train_model(dataset)
