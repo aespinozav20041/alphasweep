@@ -88,6 +88,11 @@ class Observability:
             "Observed latency in milliseconds",
             registry=self.registry,
         )
+        self.sharpe_ratio = Gauge(
+            "sharpe_ratio",
+            "Current strategy Sharpe ratio",
+            registry=self.registry,
+        )
         self.broker_api_latency_ms = Histogram(
             "broker_api_latency_ms",
             "Latency of broker API calls in milliseconds",
@@ -175,11 +180,26 @@ class Observability:
         self.order_errors_total.inc(n)
         self._send_alert("Order error encountered")
 
-    def observe_slippage(self, bps: float) -> None:
+    def observe_slippage(self, bps: float, threshold: float | None = None) -> None:
         self.slippage_bps.observe(bps)
+        if threshold is not None and bps > threshold:
+            self._send_alert(
+                f"Slippage {bps:.2f}bps exceeds {threshold:.2f}bps"
+            )
 
-    def observe_latency(self, ms: float) -> None:
+    def observe_latency(self, ms: float, threshold: float | None = None) -> None:
         self.latency_ms.observe(ms)
+        if threshold is not None and ms > threshold:
+            self._send_alert(f"Latency {ms:.0f}ms exceeds {threshold:.0f}ms")
+
+    def observe_sharpe(self, sharpe: float, threshold: float | None = None) -> None:
+        """Record Sharpe ratio and alert if below ``threshold``."""
+
+        self.sharpe_ratio.set(sharpe)
+        if threshold is not None and sharpe < threshold:
+            self._send_alert(
+                f"Sharpe ratio {sharpe:.2f} below {threshold:.2f}"
+            )
 
     def observe_broker_latency(self, ms: float, threshold: float | None = None) -> None:
         """Record broker API latency and alert if above ``threshold``."""
