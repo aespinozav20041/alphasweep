@@ -88,3 +88,32 @@ class NewsSentiment(BaseModel):
         if v < -1 or v > 1:
             raise ValueError("sentiment must be between -1 and 1")
         return v
+
+
+class CorporateAction(BaseModel):
+    timestamp: int
+    symbol: str
+    source: str
+    timeframe: str
+    split_ratio: float | None = None
+    dividend: float | None = None
+
+    @validator("timestamp")
+    def ts_ms(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("timestamp must be positive milliseconds")
+        return v
+
+
+class MacroIndicator(BaseModel):
+    timestamp: int
+    symbol: str
+    value: float
+    source: str
+    timeframe: str
+
+    @validator("timestamp")
+    def ts_ms(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("timestamp must be positive milliseconds")
+        return v
