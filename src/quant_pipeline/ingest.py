@@ -188,7 +188,13 @@ def combine_market_data(
     tz: str = "UTC",
     resample_rule: str = "1h",
 ) -> pd.DataFrame:
-    """Merge OHLCV with L2/L3, corporate actions and macro data.
+    """Merge disparate market datasets into a single time-aligned frame.
+
+    This utility harmonises OHLCV data with L2/L3 order book metrics,
+    corporate actions and macroeconomic series. All inputs are converted
+    to the requested timezone, resampled to a common frequency and joined
+    on the timestamp index. Corporate actions are also used to adjust the
+    price history for splits and mild outliers.
 
     Parameters
     ----------
@@ -218,6 +224,11 @@ def combine_market_data(
 
     base = _merge(l2)
     base = _merge(l3)
+
+    if corporate is not None and not corporate.empty:
+        corp_p = _prep_ts(corporate, tz).resample(resample_rule).last().ffill()
+        base = base.join(corp_p, how="left")
+
     if macro is not None and not macro.empty:
         macro_p = _prep_ts(macro, tz).resample(resample_rule).last().ffill()
         base = base.join(macro_p, how="left")

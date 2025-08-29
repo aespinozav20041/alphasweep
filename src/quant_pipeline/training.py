@@ -125,4 +125,10 @@ class PurgedKFold:
             yield train_indices, test_indices
             current = stop
 
+    def get_n_splits(self, X: Any | None = None, y: Any | None = None, groups: Any | None = None) -> int:
+        """Return the number of folds.
+
+        Parameters are ignored and included for scikit-learn compatibility."""
+        return self.n_splits
+
 __all__ = ["AutoTrainer", "PurgedKFold"]
