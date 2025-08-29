@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import logging
+
+from typing import Dict, List
+=======
 from typing import Dict
 from collections import deque
 from statistics import median
+
 
 from .features import FeatureBuilder, Scaler
 from .oms import OMS
@@ -14,6 +18,49 @@ from .risk import RiskManager, ATRCalculator
 from .state import load_snapshot, save_snapshot
 
 logger = logging.getLogger(__name__)
+
+
+class SignalToOrdersMapper:
+    """Translate target positions into algorithmic order slices."""
+
+    def __init__(
+        self,
+        oms: OMS,
+        *,
+        strategy: str = "twap",
+        intervals: int = 1,
+        participation: float = 0.1,
+        vwap_window: int = 5,
+    ) -> None:
+        self.oms = oms
+        self.strategy = strategy
+        self.intervals = intervals
+        self.participation = participation
+        self.vwap_window = vwap_window
+
+    def generate_orders(
+        self,
+        symbol: str,
+        price: float,
+        current_position: float,
+        target_position: float,
+        volume_profile: List[float] | None = None,
+    ) -> List[Dict[str, float | str]]:
+        diff = target_position - current_position
+        if diff == 0:
+            return []
+        side = "buy" if diff > 0 else "sell"
+        qty = abs(diff)
+        schedule = self.oms.schedule_child_orders(
+            symbol=symbol,
+            side=side,
+            qty=qty,
+            strategy=self.strategy,
+            intervals=self.intervals,
+            volume_profile=volume_profile,
+            participation=self.participation,
+        )
+        return [{"symbol": symbol, "side": side, "qty": q} for q in schedule]
 
 
 class DecisionLoop:
@@ -26,6 +73,7 @@ class DecisionLoop:
         oms: OMS,
         obs: Observability,
         *,
+        order_mapper: SignalToOrdersMapper | None = None,
         ema_span: int = 10,
         threshold: float = 0.0,
         cooldown: int = 0,
@@ -39,6 +87,7 @@ class DecisionLoop:
         self.risk = risk
         self.oms = oms
         self.obs = obs
+        self.order_mapper = order_mapper or SignalToOrdersMapper(oms)
         self.alpha = 2.0 / (ema_span + 1.0)
         self.threshold = threshold
         self.cooldown = cooldown
@@ -149,19 +198,26 @@ class DecisionLoop:
             exchange="sim",
         ):
             return
-        cid = f"{symbol}-{bar['timestamp']}"
-        try:
-            self.oms.submit_order(
-                symbol=symbol,
-                side=side,
-                qty=qty,
-                price=price,
-                client_id=cid,
-            )
-            self.obs.increment_orders_sent()
-        except Exception:  # pragma: no cover - logging
-            logger.exception("order submission failed")
-            self.obs.increment_order_errors()
+        orders = self.order_mapper.generate_orders(
+            symbol=symbol,
+            price=price,
+            current_position=current,
+            target_position=target,
+        )
+        for i, o in enumerate(orders):
+            cid = f"{symbol}-{bar['timestamp']}-{i}"
+            try:
+                self.oms.submit_order(
+                    symbol=o["symbol"],
+                    side=o["side"],
+                    qty=o["qty"],
+                    price=price,
+                    client_id=cid,
+                )
+                self.obs.increment_orders_sent()
+            except Exception:  # pragma: no cover - logging
+                logger.exception("order submission failed")
+                self.obs.increment_order_errors()
 
     def on_fill(self, order_id: str, qty: float, price: float) -> None:
         """Handle fill events updating position and slippage metric."""
@@ -197,4 +253,4 @@ class DecisionLoop:
         self._save_snapshot()
 
 
-__all__ = ["DecisionLoop"]
+__all__ = ["DecisionLoop", "SignalToOrdersMapper"]
