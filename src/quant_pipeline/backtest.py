@@ -90,13 +90,13 @@ def run_backtest(
     return_metrics: bool = False,
     rng: np.random.Generator | None = None,
 ) -> float | dict[str, float]:
-
     """Run a simple backtest using optional gene parameters.
 
     Parameters
     ----------
     df:
-        Must contain a ``ret`` column representing returns.
+        Must contain a ``ret`` column representing returns. Optionally ``spread``
+        and ``volume`` columns are used for trading costs.
     genes:
         Sequence of seven values representing ``n_layers``, ``hidden_size``,
         ``dropout``, ``seq_len``, forecast horizon ``horizon``, learning rate
@@ -107,13 +107,29 @@ def run_backtest(
         fitness of a gene vector.
     turnover_penalty:
         Penalty applied per position change to discourage excessive turnover.
+    spread_col, volume_col:
+        Column names in ``df`` providing bid-ask spread and volume information.
+        If absent or ``None`` the respective component is ignored.
+    volume_cost:
+        Coefficient for volume based cost applied as ``volume_cost / volume``.
+    slippage:
+        Standard deviation of the normal distribution used to sample stochastic
+        slippage per trade (in return units).
+    order_latency, network_latency:
+        Number of bars of delay introduced by exchange queues and
+        network/broker latency respectively.
+    return_metrics:
+        When ``True`` return a dictionary with ``pnl``, ``calmar``,
+        ``max_drawdown`` and ``turnover`` instead of only the final pnl.
+    rng:
+        Optional random number generator used for slippage simulation.
 
     Returns
     -------
-    float
+    float | dict[str, float]
         The cumulative return of the strategy after post-processing or,
-        when ``return_metrics`` is ``True``, a dictionary containing
-        ``pnl``, ``calmar``, ``max_drawdown`` and ``turnover``.
+        when ``return_metrics`` is ``True``, a dictionary containing ``pnl``,
+        ``calmar``, ``max_drawdown`` and ``turnover``.
     """
 
     if "ret" not in df.columns:
@@ -133,6 +149,7 @@ def run_backtest(
     signal = _apply_postprocess(
         raw_signal, threshold=threshold, ema_alpha=ema_alpha, cooldown=cooldown
     )
+
     # Simulate latency from order queues and network/broker delays.
     total_latency = max(order_latency, 0) + max(network_latency, 0)
     if total_latency > 0:
