@@ -19,6 +19,13 @@ class ModelRecord:
     genes_json: str
     artifact_path: str
     calib_path: str
+    lstm_path: Optional[str]
+    scaler_path: Optional[str]
+    features_path: Optional[str]
+    thresholds_path: Optional[str]
+    ga_version: Optional[str]
+    seed: Optional[int]
+    data_hash: Optional[str]
     status: str
 
 
@@ -45,10 +52,31 @@ class ModelRegistry:
                 genes_json TEXT,
                 artifact_path TEXT,
                 calib_path TEXT,
+                lstm_path TEXT,
+                scaler_path TEXT,
+                features_path TEXT,
+                thresholds_path TEXT,
+                ga_version TEXT,
+                seed INTEGER,
+                data_hash TEXT,
                 status TEXT
             )
             """
         )
+        # for backwards compatibility add missing columns
+        for col, typ in [
+            ("lstm_path", "TEXT"),
+            ("scaler_path", "TEXT"),
+            ("features_path", "TEXT"),
+            ("thresholds_path", "TEXT"),
+            ("ga_version", "TEXT"),
+            ("seed", "INTEGER"),
+            ("data_hash", "TEXT"),
+        ]:
+            try:
+                cur.execute(f"ALTER TABLE models ADD COLUMN {col} {typ}")
+            except sqlite3.OperationalError:
+                pass
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS model_perf(
@@ -71,6 +99,13 @@ class ModelRegistry:
         genes_json: str,
         artifact_path: str,
         calib_path: str,
+        lstm_path: Optional[str] = None,
+        scaler_path: Optional[str] = None,
+        features_path: Optional[str] = None,
+        thresholds_path: Optional[str] = None,
+        ga_version: Optional[str] = None,
+        seed: Optional[int] = None,
+        data_hash: Optional[str] = None,
         status: str = "challenger",
         ts: Optional[int] = None,
     ) -> int:
@@ -79,9 +114,25 @@ class ModelRegistry:
         with self._lock:
             cur = self.conn.cursor()
             cur.execute(
-                """INSERT INTO models(ts, type, genes_json, artifact_path, calib_path, status)
-                VALUES(?,?,?,?,?,?)""",
-                (ts, model_type, genes_json, artifact_path, calib_path, status),
+                """INSERT INTO models(ts, type, genes_json, artifact_path, calib_path,
+                lstm_path, scaler_path, features_path, thresholds_path,
+                ga_version, seed, data_hash, status)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    ts,
+                    model_type,
+                    genes_json,
+                    artifact_path,
+                    calib_path,
+                    lstm_path,
+                    scaler_path,
+                    features_path,
+                    thresholds_path,
+                    ga_version,
+                    seed,
+                    data_hash,
+                    status,
+                ),
             )
             self.conn.commit()
             return int(cur.lastrowid)
@@ -204,12 +255,35 @@ class ModelRegistry:
         calib_dest = d / "current_calib"
         shutil.copyfile(model["artifact_path"], art_dest)
         shutil.copyfile(model["calib_path"], calib_dest)
+        lstm_dest = None
+        if model.get("lstm_path"):
+            lstm_dest = d / "current_lstm"
+            shutil.copyfile(model["lstm_path"], lstm_dest)
+        scaler_dest = None
+        if model.get("scaler_path"):
+            scaler_dest = d / "current_scaler"
+            shutil.copyfile(model["scaler_path"], scaler_dest)
+        feat_dest = None
+        if model.get("features_path"):
+            feat_dest = d / "current_features"
+            shutil.copyfile(model["features_path"], feat_dest)
+        thresh_dest = None
+        if model.get("thresholds_path"):
+            thresh_dest = d / "current_thresholds"
+            shutil.copyfile(model["thresholds_path"], thresh_dest)
         meta = {
             "id": model_id,
             "type": model["type"],
             "genes_json": model["genes_json"],
             "artifact": str(art_dest),
             "calib": str(calib_dest),
+            "lstm": str(lstm_dest) if lstm_dest else None,
+            "scaler": str(scaler_dest) if scaler_dest else None,
+            "features": str(feat_dest) if feat_dest else None,
+            "thresholds": str(thresh_dest) if thresh_dest else None,
+            "ga_version": model.get("ga_version"),
+            "seed": model.get("seed"),
+            "data_hash": model.get("data_hash"),
         }
         with open(d / "current_meta.json", "w", encoding="utf-8") as f:
             json.dump(meta, f)
