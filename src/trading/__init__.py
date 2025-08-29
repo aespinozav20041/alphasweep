@@ -9,6 +9,16 @@ from .stable_allocator import (
     perform_sweep,
 )
 from . import ledger
+from .metrics import (
+    PNL,
+    EXPOSURE,
+    HIT_RATE,
+    DRAWDOWN,
+    FILLS,
+    ORDERS,
+    LATENCY,
+    start_metrics_server,
+)
 
 __all__ = [
     "load_stable_cfg",
@@ -21,4 +31,12 @@ __all__ = [
     "place_or_schedule",
     "perform_sweep",
     "ledger",
+    "PNL",
+    "EXPOSURE",
+    "HIT_RATE",
+    "DRAWDOWN",
+    "FILLS",
+    "ORDERS",
+    "LATENCY",
+    "start_metrics_server",
 ]

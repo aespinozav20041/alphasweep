@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
+import numpy as np
 import pandas as pd
 
 GENE_NAMES = [
@@ -79,8 +80,20 @@ def run_backtest(
     threshold: float = 0.0,
     ema_alpha: float = 0.0,
     cooldown: int = 0,
+
     turnover_penalty: float = 0.0,
 ) -> float:
+=======
+    spread_col: str | None = "spread",
+    volume_col: str | None = "volume",
+    volume_cost: float = 0.0,
+    slippage: float = 0.0,
+    order_latency: int = 0,
+    network_latency: int = 0,
+    return_metrics: bool = False,
+    rng: np.random.Generator | None = None,
+) -> float | dict[str, float]:
+
     """Run a simple backtest using optional gene parameters.
 
     Parameters
@@ -101,7 +114,9 @@ def run_backtest(
     Returns
     -------
     float
-        The cumulative return of the strategy after post-processing.
+        The cumulative return of the strategy after post-processing or,
+        when ``return_metrics`` is ``True``, a dictionary containing
+        ``pnl``, ``calmar``, ``max_drawdown`` and ``turnover``.
     """
 
     if "ret" not in df.columns:
@@ -126,6 +141,44 @@ def run_backtest(
         turns = (signal != signal.shift()).sum()
         pnl -= turnover_penalty * float(turns)
     return float(pnl)
+=======
+
+    # Simulate latency from order queues and network/broker delays.
+    total_latency = max(order_latency, 0) + max(network_latency, 0)
+    if total_latency > 0:
+        exec_signal = signal.shift(total_latency).fillna(0)
+    else:
+        exec_signal = signal
+
+    trades = exec_signal.diff().abs().fillna(exec_signal.abs())
+    spread = df[spread_col] if spread_col and spread_col in df.columns else 0
+    volume = df[volume_col] if volume_col and volume_col in df.columns else 1
+    cost = trades * (spread + volume_cost / volume)
+
+    if slippage > 0:
+        if rng is None:
+            rng = np.random.default_rng()
+        cost += np.abs(rng.normal(0.0, slippage, size=len(df))) * trades
+
+    strat_ret = exec_signal.shift().fillna(0) * df["ret"] - cost
+    pnl_series = strat_ret.cumsum()
+    pnl = pnl_series.iloc[-1] if not pnl_series.empty else 0.0
+
+    if not return_metrics:
+        return float(pnl)
+
+    dd = pnl_series.cummax() - pnl_series
+    max_dd = float(dd.max()) if not dd.empty else 0.0
+    calmar = float(pnl / max_dd) if max_dd != 0 else float("inf")
+    turnover = float(trades.sum())
+
+    return {
+        "pnl": float(pnl),
+        "calmar": calmar,
+        "max_drawdown": max_dd,
+        "turnover": turnover,
+    }
+
 
 
 __all__ = ["run_backtest", "GENE_NAMES"]

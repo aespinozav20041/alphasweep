@@ -1,4 +1,10 @@
-"""Walk-forward evaluation with probability calibration."""
+"""Walk-forward evaluation with probability calibration.
+
+This utility performs a rolling IS→OOS split, trains the supplied model,
+optionally applies probability calibration for classification tasks and logs
+OOS metrics/parameters to :class:`ModelRegistry`.  Parameter sensitivity is
+reported as the variance of model parameters across windows.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -17,6 +23,25 @@ class WalkforwardResult:
 
 
 def _calibrate(model, X: np.ndarray, y: np.ndarray, method: str) -> object:
+    """Return a probability calibrated version of ``model``.
+
+    Parameters
+    ----------
+    model : object
+        A fitted classifier implementing ``predict_proba``.
+    X, y : np.ndarray
+        Training data used for calibration.  The estimator is assumed to be
+        pre-fit and therefore ``cv='prefit'`` is used.
+    method : str
+        Calibration method passed to :class:`CalibratedClassifierCV`.  Expected
+        values are ``'sigmoid'`` (Platt) or ``'isotonic'``.
+
+    Returns
+    -------
+    object
+        The calibrated model which exposes ``predict_proba``.
+    """
+
     calib = CalibratedClassifierCV(model, method=method, cv="prefit")
     calib.fit(X, y)
     return calib
@@ -80,7 +105,8 @@ def walkforward(
         X_test, y_test = X[end_train:end_test], y[end_train:end_test]
 
         model, params = train_func(X_train, y_train)
-        if calibrate:
+        if calibrate and hasattr(model, "predict_proba"):
+            # Only attempt probability calibration for classification models.
             model = _calibrate(model, X_train, y_train, calibrate)
 
         y_prob = model.predict_proba(X_test)[:, 1]

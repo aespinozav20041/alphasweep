@@ -4,7 +4,7 @@ from quant_pipeline.model_registry import ChampionReloader, ModelRegistry
 
 def _mk_files(tmp_path, tag):
     files = {}
-    for suffix in ["bin", "calib", "lstm", "scaler", "feat", "thresh"]:
+    for suffix in ["bin", "calib", "lstm", "scaler", "feat", "thresh", "risk"]:
         p = tmp_path / f"{tag}.{suffix}"
         p.write_text(tag)
         files[suffix] = str(p)
@@ -26,6 +26,7 @@ def test_promotion_and_hot_reload(tmp_path):
         scaler_path=a_files["scaler"],
         features_path=a_files["feat"],
         thresholds_path=a_files["thresh"],
+        risk_rules_path=a_files["risk"],
         ga_version="v1",
         seed=1,
         data_hash="hash-a",
@@ -44,6 +45,7 @@ def test_promotion_and_hot_reload(tmp_path):
         scaler_path=b_files["scaler"],
         features_path=b_files["feat"],
         thresholds_path=b_files["thresh"],
+        risk_rules_path=b_files["risk"],
         ga_version="v1",
         seed=1,
         data_hash="hash-b",
@@ -56,6 +58,8 @@ def test_promotion_and_hot_reload(tmp_path):
         uplift_min=0.5,
         min_bars_to_compare=3,
         export_dir=str(export),
+        sharpe_min=0.5,
+        max_drawdown=1.0,
     )
     assert promoted == challenger_id
     meta = json.loads((export / "current_meta.json").read_text())
@@ -63,10 +67,12 @@ def test_promotion_and_hot_reload(tmp_path):
     assert meta["ga_version"] == "v1"
     assert meta["seed"] == 1
     assert meta["data_hash"] == "hash-b"
+    assert meta["risk_rules"]
     assert (export / "current_lstm").read_text() == "b"
     assert (export / "current_scaler").read_text() == "b"
     assert (export / "current_features").read_text() == "b"
     assert (export / "current_thresholds").read_text() == "b"
+    assert (export / "current_risk_rules").read_text() == "b"
 
     loads = []
 
@@ -88,6 +94,7 @@ def test_promotion_and_hot_reload(tmp_path):
         scaler_path=c_files["scaler"],
         features_path=c_files["feat"],
         thresholds_path=c_files["thresh"],
+        risk_rules_path=c_files["risk"],
         ga_version="v1",
         seed=1,
         data_hash="hash-c",
@@ -100,6 +107,8 @@ def test_promotion_and_hot_reload(tmp_path):
         uplift_min=0.2,
         min_bars_to_compare=3,
         export_dir=str(export),
+        sharpe_min=0.5,
+        max_drawdown=1.0,
     )
     assert reloader.poll() == c_id
     assert loads == [challenger_id, c_id]

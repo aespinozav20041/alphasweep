@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+import numpy as np
+
 
 @dataclass
 class ModelRecord:
@@ -23,6 +25,7 @@ class ModelRecord:
     scaler_path: Optional[str]
     features_path: Optional[str]
     thresholds_path: Optional[str]
+    risk_rules_path: Optional[str]
     ga_version: Optional[str]
     seed: Optional[int]
     data_hash: Optional[str]
@@ -56,6 +59,7 @@ class ModelRegistry:
                 scaler_path TEXT,
                 features_path TEXT,
                 thresholds_path TEXT,
+                risk_rules_path TEXT,
                 ga_version TEXT,
                 seed INTEGER,
                 data_hash TEXT,
@@ -69,6 +73,7 @@ class ModelRegistry:
             ("scaler_path", "TEXT"),
             ("features_path", "TEXT"),
             ("thresholds_path", "TEXT"),
+            ("risk_rules_path", "TEXT"),
             ("ga_version", "TEXT"),
             ("seed", "INTEGER"),
             ("data_hash", "TEXT"),
@@ -113,6 +118,7 @@ class ModelRegistry:
         scaler_path: Optional[str] = None,
         features_path: Optional[str] = None,
         thresholds_path: Optional[str] = None,
+        risk_rules_path: Optional[str] = None,
         ga_version: Optional[str] = None,
         seed: Optional[int] = None,
         data_hash: Optional[str] = None,
@@ -125,9 +131,9 @@ class ModelRegistry:
             cur = self.conn.cursor()
             cur.execute(
                 """INSERT INTO models(ts, type, genes_json, artifact_path, calib_path,
-                lstm_path, scaler_path, features_path, thresholds_path,
+                lstm_path, scaler_path, features_path, thresholds_path, risk_rules_path,
                 ga_version, seed, data_hash, status)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     ts,
                     model_type,
@@ -138,6 +144,7 @@ class ModelRegistry:
                     scaler_path,
                     features_path,
                     thresholds_path,
+                    risk_rules_path,
                     ga_version,
                     seed,
                     data_hash,
@@ -219,27 +226,61 @@ class ModelRegistry:
         uplift_min: float,
         min_bars_to_compare: int,
         export_dir: str,
+        sharpe_min: float,
+        max_drawdown: float,
     ) -> Optional[int]:
         """Evaluate challengers and promote if performance uplift achieved."""
 
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         with self._lock:
             champ = self._current_champion()
-            champ_perf = self._recent_perf(champ["id"], eval_window_bars) if champ else []
-            for challenger in self.list_models(status="challenger"):
-                chal_perf = self._recent_perf(challenger["id"], eval_window_bars)
-                bars = min(len(champ_perf), len(chal_perf))
-                if bars < min_bars_to_compare:
-                    continue
-                champ_ret = sum(p["ret"] for p in champ_perf[-bars:]) if champ_perf else 0.0
-                chal_ret = sum(p["ret"] for p in chal_perf[-bars:])
-                if champ_ret == 0:
-                    uplift = float("inf") if chal_ret > 0 else 0.0
-                else:
-                    uplift = (chal_ret - champ_ret) / abs(champ_ret)
-                if uplift >= uplift_min:
-                    self.promote_model(challenger["id"], export_dir)
-                    return challenger["id"]
+            champ_perf = (
+                self._recent_perf(champ["id"], eval_window_bars) if champ else []
+            )
+
+        champ_ret = sum(p["ret"] for p in champ_perf)
+
+        def _metrics(perf: List[Dict]) -> Dict[str, float]:
+            rets = [p["ret"] for p in perf]
+            sharpes = [p["sharpe"] for p in perf]
+            cum = np.cumsum(rets)
+            dd = float(np.max(np.maximum.accumulate(cum) - cum)) if len(cum) else 0.0
+            return {
+                "ret": sum(rets),
+                "sharpe": float(np.mean(sharpes)) if sharpes else 0.0,
+                "dd": dd,
+                "bars": len(perf),
+            }
+
+        challengers = self.list_models(status="challenger")
+
+        def _eval(chal: Dict) -> Optional[int]:
+            chal_perf = self._recent_perf(chal["id"], eval_window_bars)
+            metrics = _metrics(chal_perf)
+            bars = min(metrics["bars"], len(champ_perf))
+            if bars < min_bars_to_compare:
+                return None
+            if champ_ret == 0:
+                uplift = float("inf") if metrics["ret"] > 0 else 0.0
+            else:
+                uplift = (metrics["ret"] - champ_ret) / abs(champ_ret)
+            if (
+                uplift >= uplift_min
+                and metrics["sharpe"] >= sharpe_min
+                and metrics["dd"] <= max_drawdown
+            ):
+                self.promote_model(chal["id"], export_dir)
+                return chal["id"]
             return None
+
+        with ThreadPoolExecutor() as ex:
+            futures = {ex.submit(_eval, c): c for c in challengers}
+            for fut in as_completed(futures):
+                res = fut.result()
+                if res is not None:
+                    return res
+        return None
 
     # ------------------------------------------------------------------
     # Helpers
@@ -313,6 +354,10 @@ class ModelRegistry:
         if model.get("thresholds_path"):
             thresh_dest = d / "current_thresholds"
             shutil.copyfile(model["thresholds_path"], thresh_dest)
+        risk_dest = None
+        if model.get("risk_rules_path"):
+            risk_dest = d / "current_risk_rules"
+            shutil.copyfile(model["risk_rules_path"], risk_dest)
         meta = {
             "id": model_id,
             "type": model["type"],
@@ -323,6 +368,7 @@ class ModelRegistry:
             "scaler": str(scaler_dest) if scaler_dest else None,
             "features": str(feat_dest) if feat_dest else None,
             "thresholds": str(thresh_dest) if thresh_dest else None,
+            "risk_rules": str(risk_dest) if risk_dest else None,
             "ga_version": model.get("ga_version"),
             "seed": model.get("seed"),
             "data_hash": model.get("data_hash"),
