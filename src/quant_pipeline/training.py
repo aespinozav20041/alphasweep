@@ -8,14 +8,117 @@ import time
 from typing import Any, Callable, Dict, Iterator, Tuple
 
 from concurrent.futures import ThreadPoolExecutor
+import json
 import numpy as np
 import pandas as pd
+import tempfile
+from pathlib import Path
 
 from .datasets import make_lstm_windows
 from .model_registry import ModelRegistry
 from .labeling import forward_return, triple_barrier_labels
+from .backtest import run_backtest
+from .genetic import GeneticOptimizer
 
 logger = logging.getLogger(__name__)
+
+
+def train_with_genetic(
+    df: pd.DataFrame,
+    *,
+    generations: int = 3,
+    population_size: int = 5,
+    rng: np.random.Generator | None = None,
+) -> Dict[str, Any]:
+    """Explore hyper-parameters using :class:`GeneticOptimizer`.
+
+    Parameters
+    ----------
+    df:
+        Dataset containing at least a ``ret`` column used by the backtest
+        fitness function.
+    generations, population_size:
+        Genetic algorithm settings controlling search effort.
+    rng:
+        Optional NumPy random generator for deterministic behaviour.
+
+    Returns
+    -------
+    dict
+        Training info compatible with :class:`AutoTrainer`.
+    """
+
+    if "ret" not in df.columns:
+        raise ValueError("dataset must contain 'ret' column")
+
+    bounds = [
+        (1, 3),  # n_lstm
+        (8, 64),  # hidden
+        (0.0, 0.5),  # dropout
+        (5, 50),  # seq_len
+        (1, 10),  # horizon
+        (1e-4, 1e-2),  # lr
+        (0.0, 0.1),  # weight_decay
+        (0.0, 1.0),  # umbral
+        (0.0, 1.0),  # ema
+        (0, 10),  # cooldown
+    ]
+
+    def fitness(x: np.ndarray) -> float:
+        pnl = run_backtest(
+            df,
+            x[:7],
+            threshold=float(x[7]),
+            ema_alpha=float(x[8]),
+            cooldown=int(round(x[9])),
+        )
+        return float(pnl)
+
+    opt = GeneticOptimizer(
+        fitness,
+        bounds,
+        population_size=population_size,
+        rng=rng,
+    )
+    best, _ = opt.optimise(generations=generations, patience=generations)
+    best = best.tolist()
+
+    metrics = run_backtest(
+        df,
+        best[:7],
+        threshold=float(best[7]),
+        ema_alpha=float(best[8]),
+        cooldown=int(round(best[9])),
+        return_metrics=True,
+    )
+
+    params = {
+        "n_lstm": int(round(best[0])),
+        "hidden": int(round(best[1])),
+        "dropout": float(best[2]),
+        "seq_len": int(round(best[3])),
+        "horizon": int(round(best[4])),
+        "lr": float(best[5]),
+        "weight_decay": float(best[6]),
+        "umbral": float(best[7]),
+        "ema": float(best[8]),
+        "cooldown": int(round(best[9])),
+    }
+
+    tmp = Path(tempfile.mkdtemp(prefix="ga_model_"))
+    art = tmp / "artifact.txt"
+    calib = tmp / "calib.txt"
+    art.write_text("artifact")
+    calib.write_text("calibration")
+
+    return {
+        "type": "ga",
+        "genes_json": json.dumps(params),
+        "artifact_path": str(art),
+        "calib_path": str(calib),
+        "oos_params": params,
+        "oos_metrics": metrics,
+    }
 
 
 class AutoTrainer:
@@ -139,6 +242,12 @@ class AutoTrainer:
                 ts=int(time.time()),
             )
             logger.info("registered challenger %s for shadow eval", model_id)
+            params = info.get("oos_params") or json.loads(info.get("genes_json", "{}"))
+            metrics = info.get("oos_metrics")
+            if metrics:
+                self.registry.log_oos_metrics(
+                    model_id, params=params, metrics=metrics, ts=int(time.time())
+                )
             registered = True
 
         if registered:
@@ -189,4 +298,4 @@ class PurgedKFold:
             yield train_indices, test_indices
             current = stop
 
-__all__ = ["AutoTrainer", "PurgedKFold"]
+__all__ = ["AutoTrainer", "PurgedKFold", "train_with_genetic"]
