@@ -23,6 +23,37 @@ from typing import Dict, Mapping
 import numpy as np
 
 
+def blend_horizons(signals: Dict[int, np.ndarray | float]) -> np.ndarray:
+    """Blend signals coming from different forecast horizons.
+
+    Each entry in ``signals`` maps a horizon (in bars) to the signal produced
+    for that horizon.  The horizons are combined using weights inversely
+    proportional to their length so that nearer horizons carry more influence.
+
+    Parameters
+    ----------
+    signals
+        Mapping from horizon to already computed signal values.  Values may be
+        scalars or NumPy arrays and must all share the same shape.
+
+    Returns
+    -------
+    numpy.ndarray
+        Weighted blend of the provided signals.
+    """
+
+    if not signals:
+        raise ValueError("signals must not be empty")
+
+    weights = {h: 1.0 / float(h) for h in signals}
+    total = sum(weights.values())
+    blended = None
+    for h, sig in signals.items():
+        arr = np.asarray(sig, dtype=float)
+        w = weights[h] / total
+        blended = arr * w if blended is None else blended + arr * w
+    return blended
+
 class SignalEnsemble:
     """Blend signals from multiple models.
 
@@ -89,4 +120,4 @@ class SignalEnsemble:
         return blended
 
 
-__all__ = ["SignalEnsemble"]
+__all__ = ["SignalEnsemble", "blend_horizons"]
