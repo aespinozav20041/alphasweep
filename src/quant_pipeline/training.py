@@ -9,8 +9,10 @@ from typing import Any, Callable, Dict, Iterator, Tuple
 
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
+import pandas as pd
 
 from .model_registry import ModelRegistry
+from .labels import triple_barrier
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,9 @@ class AutoTrainer:
         build_dataset: Callable[[int], Any],
         train_model: Callable[[Any], Dict[str, str]],
         num_parallel: int = 1,
+        label_horizon: int | None = None,
+        label_up_mult: float = 1.0,
+        label_down_mult: float = 1.0,
     ) -> None:
         self.registry = registry
         self.train_every_bars = train_every_bars
@@ -36,6 +41,9 @@ class AutoTrainer:
         self.build_dataset = build_dataset
         self.train_model = train_model
         self.num_parallel = max(1, num_parallel)
+        self.label_horizon = label_horizon
+        self.label_up_mult = label_up_mult
+        self.label_down_mult = label_down_mult
         self._bar_count = 0
         self._event = threading.Event()
         self._stop = threading.Event()
@@ -76,7 +84,18 @@ class AutoTrainer:
     def _train_cycle(self) -> None:
         logger.info("training cycle started")
         dataset = self.build_dataset(self.history_days)
-
+        if (
+            self.label_horizon is not None
+            and isinstance(dataset, pd.DataFrame)
+        ):
+            labels = triple_barrier(
+                dataset,
+                self.label_horizon,
+                self.label_up_mult,
+                self.label_down_mult,
+            )
+            dataset = dataset.copy()
+            dataset["label"] = labels
 
         def _train() -> Dict[str, str]:
             return self.train_model(dataset)
