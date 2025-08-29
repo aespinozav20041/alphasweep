@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Iterator, Tuple
+
+import numpy as np
 
 from .model_registry import ModelRegistry
 
@@ -86,4 +88,41 @@ class AutoTrainer:
         self.registry.prune_challengers(self.max_challengers)
 
 
-__all__ = ["AutoTrainer"]
+class PurgedKFold:
+    """K-Fold cross-validator with purging and optional embargo.
+
+    This splitter avoids look-ahead bias by removing training samples that
+    overlap with the test fold and by adding an embargo period after each
+    test set.
+
+    Parameters
+    ----------
+    n_splits : int
+        Number of folds. Must be at least 2.
+    embargo : int
+        Number of observations to exclude after each test fold.
+    """
+
+    def __init__(self, n_splits: int = 5, embargo: int = 0) -> None:
+        if n_splits < 2:
+            raise ValueError("n_splits must be at least 2")
+        self.n_splits = n_splits
+        self.embargo = embargo
+
+    def split(self, X: Any) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
+        n_samples = len(X)
+        indices = np.arange(n_samples)
+        fold_sizes = np.full(self.n_splits, n_samples // self.n_splits, dtype=int)
+        fold_sizes[: n_samples % self.n_splits] += 1
+        current = 0
+        for fold_size in fold_sizes:
+            start, stop = current, current + fold_size
+            test_indices = indices[start:stop]
+            embargo_start = min(n_samples, stop + self.embargo)
+            train_start = indices[: max(0, start - self.embargo)]
+            train_end = indices[embargo_start:]
+            train_indices = np.concatenate([train_start, train_end])
+            yield train_indices, test_indices
+            current = stop
+
+__all__ = ["AutoTrainer", "PurgedKFold"]
