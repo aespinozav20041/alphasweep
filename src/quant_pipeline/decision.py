@@ -9,6 +9,7 @@ from .features import FeatureBuilder, Scaler
 from .oms import OMS
 from .observability import Observability
 from .risk import RiskManager, ATRCalculator
+from .state import load_snapshot, save_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,8 @@ class DecisionLoop:
         threshold: float = 0.0,
         cooldown: int = 0,
         lstm_path: str | None = None,
+        snapshot_path: str | None = None,
+        snapshot_interval: int = 0,
     ) -> None:
         self.model = model
         self.risk = risk
@@ -44,9 +47,25 @@ class DecisionLoop:
         self.scaler = Scaler()
         self.atr = ATRCalculator(window=self.risk.atr_window)
         self.lstm_path = lstm_path
+        self.snapshot_path = snapshot_path
+        self.snapshot_interval = snapshot_interval
+        self._bars_since_snapshot = 0
         if self.lstm_path and hasattr(self.model, "load_state"):
             try:
                 self.model.load_state(self.lstm_path)
+            except FileNotFoundError:
+                pass
+        if self.snapshot_path:
+            try:
+                m, s, pos, hidden = load_snapshot(self.snapshot_path)
+                if m is not None:
+                    self.model = m
+                if s is not None:
+                    self.scaler = s
+                if pos is not None:
+                    self.position = pos
+                if hidden is not None and hasattr(self.model, "hidden"):
+                    self.model.hidden = hidden
             except FileNotFoundError:
                 pass
 
@@ -58,6 +77,10 @@ class DecisionLoop:
         if self.lstm_path and hasattr(self.model, "save_state"):
             self.model.save_state(self.lstm_path)
         self._ema = self.alpha * pred + (1 - self.alpha) * self._ema
+        self._bars_since_snapshot += 1
+        if self.snapshot_path and self.snapshot_interval and self._bars_since_snapshot >= self.snapshot_interval:
+            self._bars_since_snapshot = 0
+            self._save_snapshot()
         if self._cooldown > 0:
             self._cooldown -= 1
             return
@@ -117,6 +140,22 @@ class DecisionLoop:
         """Delegate reconciliation to OMS."""
 
         self.oms.reconcile()
+
+    def _save_snapshot(self) -> None:
+        if not self.snapshot_path:
+            return
+        hidden = getattr(self.model, "hidden", None)
+        save_snapshot(self.snapshot_path, self.model, self.scaler, self.position, hidden)
+
+    def save(self) -> None:
+        """Persist current state to the configured snapshot path."""
+
+        self._save_snapshot()
+
+    def close(self) -> None:
+        """Save snapshot before shutting down."""
+
+        self._save_snapshot()
 
 
 __all__ = ["DecisionLoop"]
