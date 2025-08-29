@@ -7,6 +7,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, Iterator, Tuple
 
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 from .model_registry import ModelRegistry
@@ -76,49 +77,41 @@ class AutoTrainer:
         logger.info("training cycle started")
         dataset = self.build_dataset(self.history_days)
 
-        info = self.train_model(dataset)
-        if not info:
-            logger.warning("training produced no model")
-            return
-        model_id = self.registry.register_model(
-            model_type=info["type"],
-            genes_json=info.get("genes_json", "{}"),
-            artifact_path=info["artifact_path"],
-            calib_path=info["calib_path"],
-            lstm_path=info.get("lstm_path"),
-            scaler_path=info.get("scaler_path"),
-            features_path=info.get("features_path"),
-            thresholds_path=info.get("thresholds_path"),
-            risk_rules_path=info.get("risk_rules_path"),
-            ga_version=info.get("ga_version"),
-            seed=info.get("seed"),
-            data_hash=info.get("data_hash"),
-            ts=int(time.time()),
-        )
-        logger.info("registered challenger %s for shadow eval", model_id)
-=======
-        from concurrent.futures import ThreadPoolExecutor
-
         def _train() -> Dict[str, str]:
             return self.train_model(dataset)
 
-        with ThreadPoolExecutor(max_workers=self.num_parallel) as ex:
-            futures = [ex.submit(_train) for _ in range(self.num_parallel)]
-            for fut in futures:
-                info = fut.result()
-                if not info:
-                    logger.warning("training produced no model")
-                    continue
-                model_id = self.registry.register_model(
-                    model_type=info["type"],
-                    genes_json=info.get("genes_json", "{}"),
-                    artifact_path=info["artifact_path"],
-                    calib_path=info["calib_path"],
-                    ts=int(time.time()),
-                )
-                logger.info("registered challenger %s for shadow eval", model_id)
+        if self.num_parallel == 1:
+            infos = [_train()]
+        else:
+            with ThreadPoolExecutor(max_workers=self.num_parallel) as ex:
+                futures = [ex.submit(_train) for _ in range(self.num_parallel)]
+                infos = [f.result() for f in futures]
 
-        self.registry.prune_challengers(self.max_challengers)
+        registered = False
+        for info in infos:
+            if not info:
+                logger.warning("training produced no model")
+                continue
+            model_id = self.registry.register_model(
+                model_type=info["type"],
+                genes_json=info.get("genes_json", "{}"),
+                artifact_path=info["artifact_path"],
+                calib_path=info["calib_path"],
+                lstm_path=info.get("lstm_path"),
+                scaler_path=info.get("scaler_path"),
+                features_path=info.get("features_path"),
+                thresholds_path=info.get("thresholds_path"),
+                risk_rules_path=info.get("risk_rules_path"),
+                ga_version=info.get("ga_version"),
+                seed=info.get("seed"),
+                data_hash=info.get("data_hash"),
+                ts=int(time.time()),
+            )
+            logger.info("registered challenger %s for shadow eval", model_id)
+            registered = True
+
+        if registered:
+            self.registry.prune_challengers(self.max_challengers)
 
 
 class PurgedKFold:

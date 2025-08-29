@@ -18,6 +18,8 @@ from .model_registry import ModelRegistry
 
 @dataclass
 class WalkforwardResult:
+    """Summary statistics from the walk-forward evaluation."""
+
     metrics: List[float]
     stability: float
 
