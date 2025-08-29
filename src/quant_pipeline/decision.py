@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 from typing import Dict
+from collections import deque
+from statistics import median
 
 from .features import FeatureBuilder, Scaler
 from .oms import OMS
@@ -30,6 +32,8 @@ class DecisionLoop:
         lstm_path: str | None = None,
         snapshot_path: str | None = None,
         snapshot_interval: int = 0,
+        median_window: int = 1,
+        hysteresis: float = 0.0,
     ) -> None:
         self.model = model
         self.risk = risk
@@ -40,6 +44,10 @@ class DecisionLoop:
         self.cooldown = cooldown
         self._ema = 0.0
         self._cooldown = 0
+        self.median_window = median_window
+        self.hysteresis = hysteresis
+        self._median_buf = deque(maxlen=median_window)
+        self._signal_state: int | None = None
         # current filled positions per symbol
         self.position: Dict[str, float] = {}
         # feature engineering utilities operating in streaming mode
@@ -77,6 +85,10 @@ class DecisionLoop:
         if self.lstm_path and hasattr(self.model, "save_state"):
             self.model.save_state(self.lstm_path)
         self._ema = self.alpha * pred + (1 - self.alpha) * self._ema
+        self._median_buf.append(self._ema)
+        filtered = (
+            median(self._median_buf) if self.median_window > 1 else self._ema
+        )
         self._bars_since_snapshot += 1
         if self.snapshot_path and self.snapshot_interval and self._bars_since_snapshot >= self.snapshot_interval:
             self._bars_since_snapshot = 0
@@ -84,8 +96,28 @@ class DecisionLoop:
         if self._cooldown > 0:
             self._cooldown -= 1
             return
-        if abs(self._ema) < self.threshold:
-            return
+        signal = filtered
+        if self.hysteresis > 0.0:
+            if self._signal_state is None:
+                if signal > self.threshold + self.hysteresis:
+                    self._signal_state = 1
+                elif signal < -self.threshold - self.hysteresis:
+                    self._signal_state = -1
+                else:
+                    return
+            else:
+                if (
+                    self._signal_state == 1
+                    and signal < self.threshold - self.hysteresis
+                ) or (
+                    self._signal_state == -1
+                    and signal > -self.threshold + self.hysteresis
+                ):
+                    self._signal_state = None
+                    return
+        else:
+            if abs(signal) < self.threshold:
+                return
         self._cooldown = self.cooldown
         symbol = bar["symbol"]
         price = float(bar["close"])
@@ -98,7 +130,7 @@ class DecisionLoop:
             "regime": "bull",
         }
         target = self.risk.target_position(
-            prob=self._ema, price=price, sigma=sigma, exposure_limits=exposure_limits
+            prob=signal, price=price, sigma=sigma, exposure_limits=exposure_limits
         )
         atr = self.atr.update(bar)
         _sl, _tp = self.risk.atr_sl_tp(price, atr)
