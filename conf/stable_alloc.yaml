@@ -1,0 +1,7 @@
+pct: 0.50
+min_usd: 50
+cap_daily_usd: 2000
+ticker: "SPY"
+broker: "ibkr"
+timezone: "America/New_York"
+order_style: "market_open"

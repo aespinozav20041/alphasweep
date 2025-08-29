@@ -1,0 +1,32 @@
+name: daily
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Profit router settle
+        run: python -m trading.profit_router settle
+      - name: Sweep
+        run: python -m trading.stable_allocator sweep --date $(date -d 'yesterday' +'%Y-%m-%d')
+      - name: Run scheduler if market open
+        run: |
+          python - <<'PY'
+from datetime import datetime
+from trading.market_calendar import is_market_open
+import subprocess, shlex
+if is_market_open(datetime.utcnow(), 'America/New_York'):
+    subprocess.run(shlex.split('python -m trading.stable_allocator run-scheduler'), check=True)
+else:
+    print('market closed, skipping')
+PY

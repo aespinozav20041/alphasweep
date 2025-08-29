@@ -38,10 +38,6 @@ def test_roundtrip(tmp_path):
     to_parquet(df, "ohlcv", base_path=tmp_path)
     out = read_table(
         "ohlcv",
-=======
-    to_parquet(df, "bar_ohlcv", base_path=tmp_path)
-    out = read_table(
-        "bar_ohlcv",
 
         symbols=["BTC-USDT"],
         start=df.timestamp.min(),
@@ -56,8 +52,6 @@ def test_missing_column(tmp_path):
     df = sample_bars().drop(columns=["close"])
     with pytest.raises(ValueError):
         to_parquet(df, "ohlcv", base_path=tmp_path)
-=======
-        to_parquet(df, "bar_ohlcv", base_path=tmp_path)
 
 
 def test_volume_default(tmp_path):
@@ -67,10 +61,6 @@ def test_volume_default(tmp_path):
     to_parquet(df, "ohlcv", base_path=tmp_path)
     out = read_table(
         "ohlcv",
-=======
-    to_parquet(df, "bar_ohlcv", base_path=tmp_path)
-    out = read_table(
-        "bar_ohlcv",
 
         symbols=["BTC-USDT"],
         start=df.timestamp.min(),
