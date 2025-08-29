@@ -1,4 +1,7 @@
+import numpy as np
+import pandas as pd
 import pytest
+import torch
 
 from quant_pipeline.decision import DecisionLoop
 from quant_pipeline.simple_lstm import SimpleLSTM
@@ -30,7 +33,7 @@ class DummyExchange:
         return []
 
 
-def test_decision_loop_sends_orders_and_reports_metrics():
+def test_decision_loop_sends_orders_and_reports_metrics(tmp_path):
     ex = DummyExchange()
     oms = OMS(ex, {"BTC-USDT": {"tick_size": 1, "lot_size": 0, "min_notional": 0}})
     risk = RiskManager(
@@ -42,7 +45,20 @@ def test_decision_loop_sends_orders_and_reports_metrics():
     )
     obs = Observability()
     model = SimpleLSTM()
-    loop = DecisionLoop(model, risk, oms, obs, ema_span=2, threshold=0.0, cooldown=0)
+    train = pd.DataFrame({"ret": np.linspace(-0.05, 0.05, 100)})
+    model.fit(train)
+    state_file = tmp_path / "state.pt"
+    model.save_state(state_file)
+    loop = DecisionLoop(
+        model,
+        risk,
+        oms,
+        obs,
+        ema_span=2,
+        threshold=0.0,
+        cooldown=0,
+        lstm_path=str(state_file),
+    )
 
     bars = [
         {"timestamp": 1, "symbol": "BTC-USDT", "close": 100.0},
@@ -61,3 +77,6 @@ def test_decision_loop_sends_orders_and_reports_metrics():
 
     loop.reconcile()
     assert ex.reconcile_called
+    assert state_file.exists()
+    saved = torch.load(state_file)
+    assert "hidden" in saved

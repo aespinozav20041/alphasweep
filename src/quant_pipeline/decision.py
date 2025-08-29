@@ -26,6 +26,7 @@ class DecisionLoop:
         ema_span: int = 10,
         threshold: float = 0.0,
         cooldown: int = 0,
+        lstm_path: str | None = None,
     ) -> None:
         self.model = model
         self.risk = risk
@@ -42,12 +43,20 @@ class DecisionLoop:
         self.fb = FeatureBuilder()
         self.scaler = Scaler()
         self.atr = ATRCalculator(window=self.risk.atr_window)
+        self.lstm_path = lstm_path
+        if self.lstm_path and hasattr(self.model, "load_state"):
+            try:
+                self.model.load_state(self.lstm_path)
+            except FileNotFoundError:
+                pass
 
     def on_bar(self, bar: Dict[str, float]) -> None:
         feats = self.fb.update(bar)
         scaled = self.scaler.transform(feats[["ret"]])
         self.scaler.update(feats[["ret"]])
         pred = float(self.model.predict(scaled)[0])
+        if self.lstm_path and hasattr(self.model, "save_state"):
+            self.model.save_state(self.lstm_path)
         self._ema = self.alpha * pred + (1 - self.alpha) * self._ema
         if self._cooldown > 0:
             self._cooldown -= 1
