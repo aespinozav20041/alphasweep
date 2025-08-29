@@ -68,3 +68,23 @@ class PerpMetrics(BaseModel):
         if v < 0:
             raise ValueError("timestamp must be positive milliseconds")
         return v
+
+
+class NewsSentiment(BaseModel):
+    timestamp: int
+    symbol: str
+    sentiment: float
+    source: str
+    timeframe: str
+
+    @validator("timestamp")
+    def ts_ms(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("timestamp must be positive milliseconds")
+        return v
+
+    @validator("sentiment")
+    def sentiment_range(cls, v: float) -> float:
+        if v < -1 or v > 1:
+            raise ValueError("sentiment must be between -1 and 1")
+        return v
