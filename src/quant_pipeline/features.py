@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Iterable, Sequence
 
+from collections import deque
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
@@ -57,26 +58,93 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 class FeatureBuilder:
     """Stateful feature builder operating on streaming bars.
 
-    The builder keeps track of the previous close to compute returns for new
-    bars on the fly. Additional numeric fields present in the input ``bar``
-    (e.g. news ``sentiment`` scores) are forwarded unchanged. Each call to
-    :meth:`update` returns a dataframe with the freshly created features for
-    the provided bar.
+    Besides returns this builder computes volatility, spread and
+    microstructure indicators in a streaming fashion. A ring buffer of length
+    ``seq_len`` keeps the most recent feature rows which can be retrieved via
+    :meth:`window` for consumption by sequence models such as an LSTM.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, seq_len: int = 20, *, vol_window: int = 20) -> None:
+        self.seq_len = int(seq_len)
+        self.vol_window = int(vol_window)
         self._last_close: float | None = None
+        self._ret_window: deque[float] = deque(maxlen=self.vol_window)
+        self._buffer: deque[dict] = deque(maxlen=self.seq_len)
 
     def update(self, bar: dict) -> pd.DataFrame:
         close = float(bar["close"])
         ts = int(bar["timestamp"])
         ret = 0.0 if self._last_close is None else close / self._last_close - 1.0
         self._last_close = close
-        out = {"timestamp": ts, "ret": ret}
+        self._ret_window.append(ret)
+        volatility = 0.0
+        if len(self._ret_window) > 1:
+            volatility = float(np.std(self._ret_window, ddof=1))
+
+        if {"bid1", "ask1"}.issubset(bar):
+            bid1, ask1 = float(bar["bid1"]), float(bar["ask1"])
+            spread = ask1 - bid1
+            mid_price = (ask1 + bid1) / 2.0
+        else:
+            high = float(bar.get("high", close))
+            low = float(bar.get("low", close))
+            spread = high - low
+            mid_price = close
+
+        if {"bid_sz1", "ask_sz1"}.issubset(bar):
+            bid_sz1 = float(bar["bid_sz1"])
+            ask_sz1 = float(bar["ask_sz1"])
+            denom = bid_sz1 + ask_sz1
+            ob_imbalance = (bid_sz1 - ask_sz1) / denom if denom != 0 else 0.0
+        else:
+            ob_imbalance = 0.0
+
+        if {"trades_buy_vol", "trades_sell_vol"}.issubset(bar):
+            buy = float(bar["trades_buy_vol"])
+            sell = float(bar["trades_sell_vol"])
+            denom = buy + sell
+            trade_imbalance = (buy - sell) / denom if denom != 0 else 0.0
+        else:
+            trade_imbalance = 0.0
+
+        out = {
+            "timestamp": ts,
+            "ret": ret,
+            "volatility": volatility,
+            "spread": spread,
+            "mid_price": mid_price,
+            "ob_imbalance": ob_imbalance,
+            "trade_imbalance": trade_imbalance,
+        }
         for key, val in bar.items():
-            if key not in {"timestamp", "close"}:
+            if key not in {
+                "timestamp",
+                "close",
+                "bid1",
+                "ask1",
+                "high",
+                "low",
+                "bid_sz1",
+                "ask_sz1",
+                "trades_buy_vol",
+                "trades_sell_vol",
+            }:
                 out[key] = val
+        self._buffer.append(out)
         return pd.DataFrame([out])
+
+    def window(self) -> np.ndarray:
+        """Return ``[seq_len, n_features]`` tensor of recent features."""
+
+        if not self._buffer:
+            raise ValueError("buffer is empty")
+        df = pd.DataFrame(list(self._buffer))
+        cols = [c for c in df.columns if c != "timestamp"]
+        arr = df[cols].to_numpy(dtype=float)
+        if len(arr) < self.seq_len:
+            pad = np.zeros((self.seq_len - len(arr), len(cols)))
+            arr = np.vstack([pad, arr])
+        return arr
 
 
 class Scaler:
