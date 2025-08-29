@@ -44,8 +44,17 @@ def test_decision_loop_sends_orders_and_reports_metrics(tmp_path):
         pause_minutes=1,
     )
     obs = Observability()
-    model = SimpleLSTM()
-    train = pd.DataFrame({"ret": np.linspace(-0.05, 0.05, 100)})
+    train = pd.DataFrame(
+        {
+            "ret": np.linspace(-0.05, 0.05, 100),
+            "volatility": 0.0,
+            "spread": 0.0,
+            "mid_price": 0.0,
+            "ob_imbalance": 0.0,
+            "trade_imbalance": 0.0,
+        }
+    )
+    model = SimpleLSTM(input_size=train.shape[1])
     model.fit(train)
     state_file = tmp_path / "state.pt"
     model.save_state(state_file)
@@ -73,7 +82,8 @@ def test_decision_loop_sends_orders_and_reports_metrics(tmp_path):
     order_id = "1"
     order = ex.orders[0]
     loop.on_fill(order_id, order["qty"], order["price"])
-    assert loop.position["BTC-USDT"] == pytest.approx(order["qty"])
+    expected_pos = order["qty"] if order["side"] == "buy" else -order["qty"]
+    assert loop.position["BTC-USDT"] == pytest.approx(expected_pos)
 
     loop.reconcile()
     assert ex.reconcile_called

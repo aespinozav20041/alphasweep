@@ -5,6 +5,10 @@ from __future__ import annotations
 import logging
 
 from typing import Dict, List
+
+
+import pandas as pd
+
 from collections import deque
 from statistics import median
 
@@ -113,19 +117,22 @@ class DecisionLoop:
                 pass
         if self.snapshot_path:
             try:
-                m, s, pos, hidden = load_snapshot(self.snapshot_path)
+                m, s, pos, hidden, fb = load_snapshot(self.snapshot_path)
                 if m is not None:
                     self.model = m
                 if s is not None:
                     self.scaler = s
                 if pos is not None:
                     self.position = pos
+                if fb is not None:
+                    self.fb = fb
                 if hidden is not None and hasattr(self.model, "hidden"):
                     self.model.hidden = hidden
             except FileNotFoundError:
                 pass
 
     def on_bar(self, bar: Dict[str, float]) -> None:
+
         if not quality_check(bar):
             self.obs.increment_quality_errors()
             return
@@ -133,6 +140,18 @@ class DecisionLoop:
         scaled = self.scaler.transform(feats[["ret"]])
         self.scaler.update(feats[["ret"]])
         pred = float(self.model.predict(scaled)[0])
+
+        feats = self.fb.update({k: v for k, v in bar.items() if k != "symbol"})
+        feats_no_ts = feats.drop(columns=["timestamp"])  # all feature columns
+        # scale current feature vector (excluding timestamp) using past statistics
+        _ = self.scaler.transform(feats_no_ts)
+        # build feature window and scale it for the model
+        window = self.fb.window()
+        window_df = pd.DataFrame(window, columns=feats_no_ts.columns)
+        scaled_window = self.scaler.transform(window_df).to_numpy()
+        self.scaler.update(feats_no_ts)
+        pred = float(self.model.predict(scaled_window)[0])
+
         if self.lstm_path and hasattr(self.model, "save_state"):
             self.model.save_state(self.lstm_path)
         self._ema = self.alpha * pred + (1 - self.alpha) * self._ema
@@ -242,7 +261,9 @@ class DecisionLoop:
         if not self.snapshot_path:
             return
         hidden = getattr(self.model, "hidden", None)
-        save_snapshot(self.snapshot_path, self.model, self.scaler, self.position, hidden)
+        save_snapshot(
+            self.snapshot_path, self.model, self.scaler, self.position, hidden, self.fb
+        )
 
     def save(self) -> None:
         """Persist current state to the configured snapshot path."""
