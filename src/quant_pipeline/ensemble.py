@@ -89,4 +89,26 @@ class SignalEnsemble:
         return blended
 
 
-__all__ = ["SignalEnsemble"]
+class MultiHorizonEnsemble:
+    """Blend signals across multiple forecast horizons."""
+
+    def __init__(self, ensembles: Mapping[str, SignalEnsemble]) -> None:
+        self.ensembles = dict(ensembles)
+
+    def blend(
+        self,
+        signals: Mapping[str, Mapping[str, np.ndarray | float]],
+        *,
+        weights: Mapping[str, Mapping[str, float]] | None = None,
+    ) -> Dict[str, np.ndarray]:
+        """Blend signals per horizon using corresponding ensembles."""
+
+        blended: Dict[str, np.ndarray] = {}
+        for horizon, sig in signals.items():
+            ens = self.ensembles[horizon]
+            w = weights.get(horizon) if weights is not None else None
+            blended[horizon] = ens.blend(sig, weights=w)
+        return blended
+
+
+__all__ = ["SignalEnsemble", "MultiHorizonEnsemble"]
