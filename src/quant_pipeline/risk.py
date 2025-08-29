@@ -259,6 +259,61 @@ class RiskManager:
         kelly *= self.kelly_fraction
         return kelly * (self.target_volatility / sigma)
 
+    def target_position(
+        self,
+        prob: float,
+        price: float,
+        sigma: float,
+        exposure_limits: Dict[str, float],
+    ) -> float:
+        """Return target position size after throttles and notional limits.
+
+        Parameters
+        ----------
+        prob: float
+            Expected return or probability used by ``kelly_position``.
+        price: float
+            Current instrument price used to convert limits to quantity.
+        sigma: float
+            Realized volatility of the signal.
+        exposure_limits: Dict[str, float]
+            Dictionary with keys ``symbol``, ``current_position`` and
+            ``total_notional`` as well as optional ``corr`` and ``regime``.
+        """
+
+        symbol = exposure_limits.get("symbol")
+        corr = float(exposure_limits.get("corr", 0.0))
+        regime = exposure_limits.get("regime")
+        current_pos = float(exposure_limits.get("current_position", 0.0))
+        total_notional = float(exposure_limits.get("total_notional", 0.0))
+
+        # Base Kelly position scaled to target volatility
+        target = self.kelly_position(mu=prob, sigma=sigma)
+
+        # Apply correlation and regime throttles
+        weights = self.apply_correlation_throttle({symbol: target}, corr=corr, regime=regime)
+        target = weights.get(symbol, 0.0)
+
+        if price <= 0:
+            return 0.0
+
+        # Enforce per-symbol notional limits
+        max_sym = self.max_position_notional_symbol.get(symbol)
+        if max_sym is not None:
+            max_qty = max_sym / price
+            target = max(-max_qty, min(max_qty, target))
+
+        # Enforce aggregate notional limit
+        current_notional = price * abs(current_pos)
+        new_total = total_notional - current_notional + price * abs(target)
+        if new_total > self.max_total_notional:
+            remaining = self.max_total_notional - (total_notional - current_notional)
+            remaining = max(0.0, remaining)
+            max_qty = remaining / price
+            target = min(max_qty, abs(target)) * (1 if target >= 0 else -1)
+
+        return target
+
     def atr_sl_tp(self, price: float, atr: float) -> tuple[float, float]:
         """Return stop-loss and take-profit levels based on ATR."""
 
