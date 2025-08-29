@@ -13,6 +13,7 @@ from typing import Any, Callable, Optional
 
 from execution import ExecutionClient, Order
 from risk import RiskManager
+from trading import sor
 
 
 @dataclass
@@ -43,7 +44,7 @@ class TradingEngine:
         order = Order(symbol=getattr(market_data, "symbol", ""), qty=qty, price=side_price)
         if not self.risk_manager.pre_trade(order, self.execution_client.positions()):
             return None
-        order_id = self.execution_client.send(order)
+        order_id = sor.route_order(order, self.execution_client)
         self.risk_manager.post_trade(order, self.execution_client.positions())
         return order_id
 
