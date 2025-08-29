@@ -23,6 +23,7 @@ class ModelRecord:
     scaler_path: Optional[str]
     features_path: Optional[str]
     thresholds_path: Optional[str]
+    risk_rules_path: Optional[str]
     ga_version: Optional[str]
     seed: Optional[int]
     data_hash: Optional[str]
@@ -56,6 +57,7 @@ class ModelRegistry:
                 scaler_path TEXT,
                 features_path TEXT,
                 thresholds_path TEXT,
+                risk_rules_path TEXT,
                 ga_version TEXT,
                 seed INTEGER,
                 data_hash TEXT,
@@ -69,6 +71,7 @@ class ModelRegistry:
             ("scaler_path", "TEXT"),
             ("features_path", "TEXT"),
             ("thresholds_path", "TEXT"),
+            ("risk_rules_path", "TEXT"),
             ("ga_version", "TEXT"),
             ("seed", "INTEGER"),
             ("data_hash", "TEXT"),
@@ -113,6 +116,7 @@ class ModelRegistry:
         scaler_path: Optional[str] = None,
         features_path: Optional[str] = None,
         thresholds_path: Optional[str] = None,
+        risk_rules_path: Optional[str] = None,
         ga_version: Optional[str] = None,
         seed: Optional[int] = None,
         data_hash: Optional[str] = None,
@@ -125,9 +129,9 @@ class ModelRegistry:
             cur = self.conn.cursor()
             cur.execute(
                 """INSERT INTO models(ts, type, genes_json, artifact_path, calib_path,
-                lstm_path, scaler_path, features_path, thresholds_path,
+                lstm_path, scaler_path, features_path, thresholds_path, risk_rules_path,
                 ga_version, seed, data_hash, status)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     ts,
                     model_type,
@@ -138,6 +142,7 @@ class ModelRegistry:
                     scaler_path,
                     features_path,
                     thresholds_path,
+                    risk_rules_path,
                     ga_version,
                     seed,
                     data_hash,
@@ -313,6 +318,10 @@ class ModelRegistry:
         if model.get("thresholds_path"):
             thresh_dest = d / "current_thresholds"
             shutil.copyfile(model["thresholds_path"], thresh_dest)
+        risk_dest = None
+        if model.get("risk_rules_path"):
+            risk_dest = d / "current_risk_rules"
+            shutil.copyfile(model["risk_rules_path"], risk_dest)
         meta = {
             "id": model_id,
             "type": model["type"],
@@ -323,6 +332,7 @@ class ModelRegistry:
             "scaler": str(scaler_dest) if scaler_dest else None,
             "features": str(feat_dest) if feat_dest else None,
             "thresholds": str(thresh_dest) if thresh_dest else None,
+            "risk_rules": str(risk_dest) if risk_dest else None,
             "ga_version": model.get("ga_version"),
             "seed": model.get("seed"),
             "data_hash": model.get("data_hash"),

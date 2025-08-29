@@ -82,6 +82,14 @@ class AutoTrainer:
             genes_json=info.get("genes_json", "{}"),
             artifact_path=info["artifact_path"],
             calib_path=info["calib_path"],
+            lstm_path=info.get("lstm_path"),
+            scaler_path=info.get("scaler_path"),
+            features_path=info.get("features_path"),
+            thresholds_path=info.get("thresholds_path"),
+            risk_rules_path=info.get("risk_rules_path"),
+            ga_version=info.get("ga_version"),
+            seed=info.get("seed"),
+            data_hash=info.get("data_hash"),
             ts=int(time.time()),
         )
         logger.info("registered challenger %s for shadow eval", model_id)
