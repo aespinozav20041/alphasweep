@@ -88,6 +88,16 @@ class Observability:
             "Observed latency in milliseconds",
             registry=self.registry,
         )
+        self.broker_api_latency_ms = Histogram(
+            "broker_api_latency_ms",
+            "Latency of broker API calls in milliseconds",
+            registry=self.registry,
+        )
+        self.risk_fetch_failures_total = Counter(
+            "risk_fetch_failures_total",
+            "Total number of risk fetch failures",
+            registry=self.registry,
+        )
         self.stable_sweep_amount_usd = Gauge(
             "stable_sweep_amount_usd",
             "USD amount swept in last stable sweep",
@@ -121,7 +131,9 @@ class Observability:
 
         @self.app.get("/metrics")
         def metrics() -> Response:
-            return Response(generate_latest(self.registry), media_type=CONTENT_TYPE_LATEST)
+            return Response(
+                generate_latest(self.registry), media_type=CONTENT_TYPE_LATEST
+            )
 
     # ------------------------------------------------------------------
     # Metric helpers
@@ -131,7 +143,9 @@ class Observability:
     ) -> None:
         """Record missing bar ratio and alert if above threshold."""
 
-        self.data_missing_bars_ratio.labels(symbol=symbol, timeframe=timeframe).set(ratio)
+        self.data_missing_bars_ratio.labels(symbol=symbol, timeframe=timeframe).set(
+            ratio
+        )
         if threshold is not None and ratio > threshold:
             self._send_alert(
                 f"Missing bars ratio {ratio:.2%} for {symbol} {timeframe} exceeds {threshold:.2%}"
@@ -166,6 +180,35 @@ class Observability:
 
     def observe_latency(self, ms: float) -> None:
         self.latency_ms.observe(ms)
+
+    def observe_broker_latency(self, ms: float, threshold: float | None = None) -> None:
+        """Record broker API latency and alert if above ``threshold``."""
+
+        self.broker_api_latency_ms.observe(ms)
+        if threshold is not None and ms > threshold:
+            self._send_alert(f"Broker API latency {ms:.0f}ms exceeds {threshold:.0f}ms")
+
+    def increment_risk_fetch_failures(self, n: int = 1) -> None:
+        """Increment risk fetch failure counter and alert."""
+
+        self.risk_fetch_failures_total.inc(n)
+        self._send_alert("Risk fetch failure")
+
+    def alert_connection_failure(self, service: str) -> None:
+        """Send connection failure alert for ``service``."""
+
+        self._send_alert(f"Connection failure: {service}")
+
+    def alert_timeout(self, operation: str) -> None:
+        """Send timeout alert for ``operation``."""
+
+        self._send_alert(f"Timeout during {operation}")
+
+    def alert_anomalous_ratio(self, name: str, ratio: float, threshold: float) -> None:
+        """Alert if ``ratio`` for ``name`` exceeds ``threshold``."""
+
+        if ratio > threshold:
+            self._send_alert(f"{name} ratio {ratio:.2%} exceeds {threshold:.2%}")
 
     def report_stable_sweep(self, amount_usd: float) -> None:
         """Record the USD amount swept in the last stable sweep."""
@@ -217,5 +260,6 @@ class Observability:
                     smtp.send_message(msg)
             except Exception as exc:  # pragma: no cover - logging only
                 logger.error("Failed to send email alert: %s", exc)
+
 
 __all__ = ["Observability"]
