@@ -78,6 +78,8 @@ class AutoTrainer:
         dataset = self.build_dataset(self.history_days)
 
 
+=======
+
         def _train() -> Dict[str, str]:
             return self.train_model(dataset)
 
@@ -113,7 +115,7 @@ class AutoTrainer:
 
         if registered:
             self.registry.prune_challengers(self.max_challengers)
-=======
+
         from concurrent.futures import ThreadPoolExecutor
 
         def _train() -> Dict[str, str]:
