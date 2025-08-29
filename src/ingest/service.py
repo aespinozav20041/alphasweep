@@ -16,10 +16,8 @@ from quant_pipeline.ingest import (
     ingest_news,
 )
 from quant_pipeline.observability import Observability
-from quant_pipeline.storage import read_table
-from quant_pipeline.utils import resample_ohlcv
-=======
 from quant_pipeline.storage import read_table, to_parquet
+from quant_pipeline.utils import resample_ohlcv
 
 
 

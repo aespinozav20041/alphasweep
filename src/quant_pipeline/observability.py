@@ -78,6 +78,11 @@ class Observability:
             "Total number of order send errors",
             registry=self.registry,
         )
+        self.quality_errors_total = Counter(
+            "quality_errors_total",
+            "Total number of market data quality errors",
+            registry=self.registry,
+        )
         self.slippage_bps = Histogram(
             "slippage_bps",
             "Observed slippage in basis points",
@@ -179,6 +184,9 @@ class Observability:
     def increment_order_errors(self, n: int = 1) -> None:
         self.order_errors_total.inc(n)
         self._send_alert("Order error encountered")
+
+    def increment_quality_errors(self, n: int = 1) -> None:
+        self.quality_errors_total.inc(n)
 
     def observe_slippage(self, bps: float, threshold: float | None = None) -> None:
         self.slippage_bps.observe(bps)

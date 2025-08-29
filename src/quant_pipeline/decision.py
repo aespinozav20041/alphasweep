@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 
 from typing import Dict, List
-=======
-from typing import Dict
 from collections import deque
 from statistics import median
 
@@ -16,6 +14,7 @@ from .oms import OMS
 from .observability import Observability
 from .risk import RiskManager, ATRCalculator
 from .state import load_snapshot, save_snapshot
+from .quality import quality_check
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +126,9 @@ class DecisionLoop:
                 pass
 
     def on_bar(self, bar: Dict[str, float]) -> None:
+        if not quality_check(bar):
+            self.obs.increment_quality_errors()
+            return
         feats = self.fb.update(bar)
         scaled = self.scaler.transform(feats[["ret"]])
         self.scaler.update(feats[["ret"]])
