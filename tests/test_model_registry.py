@@ -58,6 +58,8 @@ def test_promotion_and_hot_reload(tmp_path):
         uplift_min=0.5,
         min_bars_to_compare=3,
         export_dir=str(export),
+        sharpe_min=0.5,
+        max_drawdown=1.0,
     )
     assert promoted == challenger_id
     meta = json.loads((export / "current_meta.json").read_text())
@@ -105,6 +107,8 @@ def test_promotion_and_hot_reload(tmp_path):
         uplift_min=0.2,
         min_bars_to_compare=3,
         export_dir=str(export),
+        sharpe_min=0.5,
+        max_drawdown=1.0,
     )
     assert reloader.poll() == c_id
     assert loads == [challenger_id, c_id]

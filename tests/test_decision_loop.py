@@ -1,3 +1,5 @@
+import pytest
+
 from quant_pipeline.decision import DecisionLoop
 from quant_pipeline.simple_lstm import SimpleLSTM
 from quant_pipeline.oms import OMS
@@ -8,6 +10,7 @@ from quant_pipeline.observability import Observability
 class DummyExchange:
     def __init__(self):
         self.orders = []
+        self.reconcile_called = False
 
     def create_order(self, symbol, side, qty, price, client_id, leverage=None):
         self.orders.append({
@@ -23,6 +26,7 @@ class DummyExchange:
         pass
 
     def get_open_orders(self):
+        self.reconcile_called = True
         return []
 
 
@@ -49,3 +53,11 @@ def test_decision_loop_sends_orders_and_reports_metrics():
 
     assert len(ex.orders) == 1
     assert obs.orders_sent_total._value.get() == 1.0
+
+    order_id = "1"
+    order = ex.orders[0]
+    loop.on_fill(order_id, order["qty"], order["price"])
+    assert loop.position["BTC-USDT"] == pytest.approx(order["qty"])
+
+    loop.reconcile()
+    assert ex.reconcile_called
