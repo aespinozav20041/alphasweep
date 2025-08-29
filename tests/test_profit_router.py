@@ -17,7 +17,7 @@ def test_settle_triggers_sweep_and_scheduler(monkeypatch):
     # yesterday's PnL is positive
     yesterday = date.today() - timedelta(days=1)
 
-    def fake_pnl(day: date) -> float:
+    def fake_pnl(day: date, obs=None) -> float:
         assert day == yesterday
         return 100.0
 

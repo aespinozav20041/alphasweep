@@ -8,6 +8,9 @@ import csv
 from pathlib import Path
 
 import click
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from .config import StableAllocConfig, load_stable_cfg
 from . import ledger, brokers
@@ -21,25 +24,71 @@ MIN_CASH_USD = float(os.getenv("STABLE_MIN_CASH_USD", 0.0))
 REPORT_PATH = Path("reports/stable_sweep_daily.csv")
 
 
-def _fetch_risk_data(day: date) -> tuple[float, float]:
+def _http_session() -> requests.Session:
+    """Create an HTTP session with retry logic."""
+
+    session = requests.Session()
+    retries = Retry(total=3, backoff_factor=0.5)
+    adapter = HTTPAdapter(max_retries=retries)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
+def _fetch_risk_data(day: date, obs: Observability | None = None) -> tuple[float, float]:
     """Fetch risk metrics for the given date.
 
-    Returns tuple ``(dd_weekly, cash_available)``. This function acts as a
-    placeholder for a real risk/treasury service and can be monkeypatched in
-    tests.
+    Returns tuple ``(dd_weekly, cash_available)`` from the risk service. On
+    failure, reports the error via ``obs`` and returns safe defaults.
     """
 
-    return 0.0, float("inf")
+    url = os.getenv("RISK_API_URL", "http://risk/api/metrics")
+    token = os.getenv("RISK_API_TOKEN")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        session = _http_session()
+        resp = session.get(
+            url, params={"date": day.isoformat()}, headers=headers, timeout=5
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return float(data.get("dd_weekly", 0.0)), float(
+            data.get("cash_available", float("inf"))
+        )
+    except Exception as exc:  # pragma: no cover - network failures
+        if obs is not None:
+            try:
+                obs._send_alert(f"risk_data_fetch_error: {exc}")
+            except Exception:
+                pass
+        return 0.0, float("inf")
 
 
-def _fetch_net_pnl(day: date) -> float:
+def _fetch_net_pnl(day: date, obs: Observability | None = None) -> float:
     """Fetch net PnL for the given ``day``.
 
-    This is a placeholder that can be monkeypatched in tests. In production it
-    would query a treasury ledger or accounting system.
+    Queries the treasury service for net PnL. On failure, reports the error via
+    ``obs`` and returns ``0.0``.
     """
 
-    return 0.0
+    url = os.getenv("TREASURY_API_URL", "http://treasury/api/net_pnl")
+    token = os.getenv("TREASURY_API_TOKEN")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        session = _http_session()
+        resp = session.get(
+            url, params={"date": day.isoformat()}, headers=headers, timeout=5
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return float(data.get("net_pnl", 0.0))
+    except Exception as exc:  # pragma: no cover - network failures
+        if obs is not None:
+            try:
+                obs._send_alert(f"net_pnl_fetch_error: {exc}")
+            except Exception:
+                pass
+        return 0.0
 
 
 def _append_report(
@@ -90,7 +139,7 @@ def already_swept(day: date, ticker: str) -> bool:
     return any(entry.date == day and entry.ticker == ticker for entry in ledger.entries)
 
 
-def should_block_sweep(day: date) -> tuple[bool, str]:
+def should_block_sweep(day: date, obs: Observability | None = None) -> tuple[bool, str]:
     """Determine whether sweep should be blocked based on risk metrics.
 
     Parameters
@@ -104,7 +153,7 @@ def should_block_sweep(day: date) -> tuple[bool, str]:
         "cash_available". If not blocked, returns ``(False, "")``.
     """
 
-    dd_weekly, cash_available = _fetch_risk_data(day)
+    dd_weekly, cash_available = _fetch_risk_data(day, obs)
     if dd_weekly > DD_WEEKLY_THRESHOLD:
         ledger.record(
             order_id=f"block-{day.isoformat()}",
@@ -218,7 +267,7 @@ def perform_sweep(
     amount = compute_sweep_amount(net_pnl, cfg)
     if already_swept(day, cfg.ticker):
         return
-    blocked, _ = should_block_sweep(day)
+    blocked, _ = should_block_sweep(day, obs)
     if blocked:
         entry = ledger.entries[-1]
         _append_report(day, net_pnl, 0.0, cfg.ticker, entry.status, entry.order_id)
