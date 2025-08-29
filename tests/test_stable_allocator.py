@@ -35,7 +35,7 @@ def test_should_block_sweep_dd_weekly(monkeypatch):
     ledger.clear()
     today = date.today()
 
-    def fake_fetch(day):
+    def fake_fetch(day, obs=None):
         return 0.10, 1000.0  # dd_weekly, cash_available
 
     monkeypatch.setattr(sa, "_fetch_risk_data", fake_fetch)
@@ -119,3 +119,29 @@ def test_report_and_metrics(monkeypatch, tmp_path):
     assert "stable_sweep_amount_usd" in metrics
     assert "stable_orders_filled_total 1.0" in metrics
     assert "stable_sweep_blocked_total" in metrics
+
+
+def test_fetch_risk_data_failure(monkeypatch):
+    def fake_get(self, url, params=None, headers=None, timeout=None):
+        raise sa.requests.Timeout("boom")
+
+    monkeypatch.setattr(sa.requests.Session, "get", fake_get)
+    obs = Observability()
+    called: dict[str, str] = {}
+    monkeypatch.setattr(obs, "_send_alert", lambda msg: called.setdefault("msg", msg))
+    dd, cash = sa._fetch_risk_data(date.today(), obs)
+    assert dd == 0.0 and cash == float("inf")
+    assert "risk_data_fetch_error" in called["msg"]
+
+
+def test_fetch_net_pnl_failure(monkeypatch):
+    def fake_get(self, url, params=None, headers=None, timeout=None):
+        raise sa.requests.ConnectionError("boom")
+
+    monkeypatch.setattr(sa.requests.Session, "get", fake_get)
+    obs = Observability()
+    called: dict[str, str] = {}
+    monkeypatch.setattr(obs, "_send_alert", lambda msg: called.setdefault("msg", msg))
+    pnl = sa._fetch_net_pnl(date.today(), obs)
+    assert pnl == 0.0
+    assert "net_pnl_fetch_error" in called["msg"]
