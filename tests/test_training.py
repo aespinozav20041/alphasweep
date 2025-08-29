@@ -1,4 +1,6 @@
 import time
+import numpy as np
+import pandas as pd
 from quant_pipeline.model_registry import ModelRegistry
 from quant_pipeline.training import AutoTrainer
 
@@ -17,8 +19,13 @@ def test_autotrainer_registers_and_prunes(tmp_path):
 
     trained = []
 
-    def build_dataset(days):
-        return {"days": days}
+    def dataset_loader(days):
+        n = 10
+        df = pd.DataFrame({
+            "feat": np.arange(n, dtype=float),
+            "label": np.arange(n, dtype=float),
+        })
+        return df
 
     def train_model(_):
         idx = len(trained)
@@ -36,8 +43,10 @@ def test_autotrainer_registers_and_prunes(tmp_path):
         train_every_bars=1,
         history_days=3,
         max_challengers=2,
-        build_dataset=build_dataset,
+        dataset_loader=dataset_loader,
         train_model=train_model,
+        seq_len=2,
+        cv_splits=2,
     )
 
     trainer.start()
