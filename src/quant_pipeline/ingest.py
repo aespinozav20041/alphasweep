@@ -214,7 +214,10 @@ def combine_market_data(
             other = other.resample(resample_rule).mean()
         else:
             other = other.resample(resample_rule).last()
-        return base.join(other, how="left")
+        joined = base.join(other, how="left")
+        # forward fill only the newly merged columns to keep OHLCV untouched
+        joined[other.columns] = joined[other.columns].ffill()
+        return joined
 
     base = _merge(l2)
     base = _merge(l3)
