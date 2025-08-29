@@ -90,9 +90,16 @@ class DecisionLoop:
         symbol = bar["symbol"]
         price = float(bar["close"])
         sigma = float(self.scaler.std().get("ret", 0.0))
-        target = self.risk.kelly_position(mu=self._ema, sigma=sigma)
-        weights = self.risk.apply_correlation_throttle({symbol: target}, corr=0.0, regime="bull")
-        target = weights[symbol]
+        exposure_limits = {
+            "symbol": symbol,
+            "current_position": self.position.get(symbol, 0.0),
+            "total_notional": price * abs(self.position.get(symbol, 0.0)),
+            "corr": 0.0,
+            "regime": "bull",
+        }
+        target = self.risk.target_position(
+            prob=self._ema, price=price, sigma=sigma, exposure_limits=exposure_limits
+        )
         atr = self.atr.update(bar)
         _sl, _tp = self.risk.atr_sl_tp(price, atr)
         current = self.position.get(symbol, 0.0)
