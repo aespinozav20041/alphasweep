@@ -13,6 +13,7 @@ from typing import Any, Callable, Optional
 
 from execution import ExecutionClient, Order
 from risk import RiskManager
+from quant_pipeline.storage import record_prediction
 
 
 @dataclass
@@ -36,6 +37,21 @@ class TradingEngine:
 
         features = self.feature_builder(market_data)
         signal = float(self.model.predict(features))
+
+        ts = getattr(market_data, "timestamp", int(self.execution_client.clock().timestamp() * 1000))
+        symbol = getattr(market_data, "symbol", "")
+        p_long = p_short = 0.0
+        prob_fn = getattr(self.model, "predict_proba", None)
+        if prob_fn is not None:
+            try:
+                probs = prob_fn(features)
+                if isinstance(probs, (list, tuple)) and len(probs) >= 2:
+                    p_short = float(probs[0])
+                    p_long = float(probs[1])
+            except Exception:
+                pass
+        record_prediction(symbol, ts, signal, p_long, p_short)
+
         qty = self.size_fn(signal)
         if qty == 0:
             return None
