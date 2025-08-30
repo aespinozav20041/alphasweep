@@ -15,8 +15,22 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+
+import threading
 from typing import Dict, List, Optional
+=======
+from typing import Callable, Dict, List, Optional
+=======
+from datetime import datetime, timezone, timedelta
+from typing import Dict, List, Optional, Set, Callable
+
 import uuid
+import threading
+import time
+
+from quant_pipeline.observability import Observability
+
+from quant_pipeline.storage import record_fill, record_equity
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +52,12 @@ class Order:
     price: Optional[float]
         Optional limit price. ``None`` implies market order in the
         simulated client.
+    spread: float
+        Bid/ask spread of the bar triggering the order. Defaults to 0.
+    vol: float
+        Volatility estimate for the current bar. Defaults to 0.
+    volume: float
+        Traded volume of the current bar. Defaults to 0.
     id: str
         Unique order identifier generated automatically when the order is
         instantiated.
@@ -46,6 +66,9 @@ class Order:
     symbol: str
     qty: float
     price: Optional[float] = None
+    spread: float = 0.0
+    vol: float = 0.0
+    volume: float = 0.0
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
 
@@ -85,21 +108,102 @@ class ExecutionClient(ABC):
 
 
 # ---------------------------------------------------------------------------
-# Helper: simple cost model used by the simulator
+# Helper structures and cost model used by the simulator
 # ---------------------------------------------------------------------------
 
-class CostModel:
-    """Applies linear slippage and fees in basis points."""
 
-    def __init__(self, fee_bps: float = 0.0, slippage_bps: float = 0.0):
+@dataclass
+class FeeSchedule:
+    """Maker/taker fee schedule per exchange and tier in basis points."""
+
+    fees: Dict[str, Dict[str, Dict[str, float]]]
+
+    def get(self, exchange: str, tier: str, side: str) -> float:
+        """Return the fee (in bps) for the given exchange, tier and side."""
+
+        return self.fees.get(exchange, {}).get(tier, {}).get(side, 0.0)
+
+
+class CostModel:
+    """Applies slippage and fees in basis points.
+
+
+=======
+    A custom ``slippage_fn`` can be provided to model more advanced
+    behaviors. The function receives the current bar's ``spread``,
+    ``vol`` (volatility) and ``volume`` and returns slippage in basis
+    points.
+    """
+
+
+    def __init__(
+        self,
+        fee_bps: float = 0.0,
+        slippage_bps: float = 0.0,
+
+        fee_schedule: Optional[FeeSchedule] = None,
+    ):
+        # ``fee_bps`` provides a simple flat fee for backwards compatibility
         self.fee_bps = fee_bps
         self.slippage_bps = slippage_bps
+        self.fee_schedule = fee_schedule
+=======
+        slippage_fn: Optional[Callable[[float, float, float], float]] = None,
+    ):
+        self.fee_bps = fee_bps
+        self.slippage_bps = slippage_bps
+        self.slippage_fn = slippage_fn
 
-    def apply(self, price: float, qty: float) -> float:
-        """Return total cost including slippage and fees."""
+
+    def apply(
+        self,
+        price: float,
+        qty: float,
+
+        side: str = "taker",
+        exchange: str = "default",
+        tier: str = "0",
+    ) -> float:
+        """Return total cost including slippage and fees.
+
+        Parameters
+        ----------
+        price:
+            Fill price of the order.
+        qty:
+            Executed quantity. Positive for buys, negative for sells.
+        side:
+            Either ``"maker"`` or ``"taker"``; selects the fee from the
+            schedule.  Defaults to ``"taker"``.
+        exchange:
+            Exchange identifier used in the fee schedule. Defaults to
+            ``"default"``.
+        tier:
+            Volume tier used in the fee schedule. Defaults to ``"0"``.
+        """
 
         slip_price = price * (1 + self.slippage_bps / 10_000)
+
+        fee_bps = self.fee_bps
+        if self.fee_schedule is not None:
+            fee_bps = self.fee_schedule.get(exchange, tier, side)
+
+        fee = price * abs(qty) * fee_bps / 10_000
+=======
+        spread: float = 0.0,
+        vol: float = 0.0,
+        volume: float = 0.0,
+    ) -> float:
+        """Return total cost including slippage and fees."""
+
+        slip_bps = (
+            self.slippage_fn(spread, vol, volume)
+            if self.slippage_fn is not None
+            else self.slippage_bps
+        )
+        slip_price = price * (1 + slip_bps / 10_000)
         fee = price * abs(qty) * self.fee_bps / 10_000
+
         return slip_price * qty + fee
 
 
@@ -118,12 +222,41 @@ class SimExecutionClient(ExecutionClient):
         self.cost_model = cost_model or CostModel()
         self._positions: Dict[str, float] = {}
         self._ledger: List[Order] = []
+        self._cash: float = 0.0
+        self._last_price: Dict[str, float] = {}
 
     def send(self, order: Order) -> str:  # pragma: no cover - trivial
-        cost = self.cost_model.apply(order.price or 0.0, order.qty)
+
+        price = order.price or 0.0
+        slip_price = price * (1 + self.cost_model.slippage_bps / 10_000)
+        fee = price * abs(order.qty) * self.cost_model.fee_bps / 10_000
+        slippage_amt = (slip_price - price) * order.qty
+=======
+        cost = self.cost_model.apply(
+            order.price or 0.0,
+            order.qty,
+            order.spread,
+            order.vol,
+            order.volume,
+        )
+  
         self._positions[order.symbol] = self._positions.get(order.symbol, 0.0) + order.qty
         self._ledger.append(order)
-        # In a real backtest we would store PnL including cost here.
+        self._last_price[order.symbol] = slip_price
+        self._cash -= slip_price * order.qty + fee
+
+        ts = int(self.clock().timestamp() * 1000)
+        record_fill(order.id, ts, slip_price, order.qty, fee, slippage_amt)
+        nav = self._cash + sum(
+            pos * self._last_price.get(sym, 0.0)
+            for sym, pos in self._positions.items()
+        )
+        exposure = sum(
+            abs(pos * self._last_price.get(sym, 0.0))
+            for sym, pos in self._positions.items()
+        )
+        record_equity(ts, nav, self._cash, exposure)
+
         return order.id
 
     def cancel(self, order_id: str) -> None:  # pragma: no cover - stub
@@ -138,24 +271,210 @@ class SimExecutionClient(ExecutionClient):
 
 
 class BrokerExecutionClient(ExecutionClient):
-    """Placeholder implementation for live trading.
+    """Minimal live-trading client with heartbeat and reconnect logic."""
 
-    In a production system this class would wrap a library such as CCXT,
-    IBKR, or a broker SDK.  The methods currently log their usage making
-    it easy to later plug in the real API calls.
-    """
-
-    def __init__(self):
+    def __init__(self, observability: Observability | None = None, heartbeat_interval: float = 5.0):
         self._positions: Dict[str, float] = {}
+        self.obs = observability or Observability()
+        self._heartbeat_interval = heartbeat_interval
+        self._pending_orders: Dict[str, Order] = {}
+        self._connected = False
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self.connect()
+        if heartbeat_interval > 0:
+            self._thread.start()
 
+    # ------------------------------------------------------------------
+    # Connection management
+    # ------------------------------------------------------------------
+    def connect(self) -> None:
+        """Establish connection to the broker (placeholder)."""
+
+        self._connected = True
+
+    def _ping(self) -> bool:  # pragma: no cover - simple stub
+        """Heartbeat check to broker API."""
+
+        return True
+
+    def check_connection(self) -> None:
+        """Verify connection and handle disconnects."""
+
+        ok = False
+        try:
+            ok = self._ping()
+        except Exception:
+            ok = False
+        if not ok:
+            self._connected = False
+            self.obs.alert_connection_failure("broker")
+            self._cancel_all_pending()
+            self.connect()
+        else:
+            self._connected = True
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._heartbeat_interval):
+            self.obs.heartbeat()
+            self.check_connection()
+
+    def close(self) -> None:
+        """Stop heartbeat thread."""
+
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join()
+
+    def _cancel_all_pending(self) -> None:
+        for oid in list(self._pending_orders):
+            self.cancel(oid)
+
+    # ------------------------------------------------------------------
+    # ExecutionClient interface
+    # ------------------------------------------------------------------
     def send(self, order: Order) -> str:  # pragma: no cover - stub
-        # Replace the print statements with real broker API calls.
+        if not self._connected:
+            self.connect()
         print(f"LIVE ORDER -> {order.symbol} {order.qty}@{order.price}")
         self._positions[order.symbol] = self._positions.get(order.symbol, 0.0) + order.qty
+        self._pending_orders[order.id] = order
+        self.obs.increment_orders_sent()
         return order.id
 
     def cancel(self, order_id: str) -> None:  # pragma: no cover - stub
         print(f"CANCEL ORDER -> {order_id}")
+        self._pending_orders.pop(order_id, None)
+        self.obs.increment_order_errors()
+=======
+    """Simple live-trading client with basic resiliency features.
+
+    The implementation is intentionally lightweight, logging its actions
+    instead of performing real network requests.  Nevertheless it models
+    behaviours typically found in production clients such as periodic
+    heartbeats, cancel-on-disconnect and retry logic with exponential
+    backoff.
+    """
+
+    def __init__(
+        self,
+        heartbeat_interval: int = 30,
+        timeout: int = 10,
+        max_retries: int = 3,
+        kill_switch: bool = False,
+    ):
+        self._positions: Dict[str, float] = {}
+
+        self._cash: float = 0.0
+        self._last_price: Dict[str, float] = {}
+
+    def send(self, order: Order) -> str:  # pragma: no cover - stub
+        # Replace the print statements with real broker API calls.
+        price = order.price or 0.0
+        print(f"LIVE ORDER -> {order.symbol} {order.qty}@{price}")
+        self._positions[order.symbol] = self._positions.get(order.symbol, 0.0) + order.qty
+        self._last_price[order.symbol] = price
+        self._cash -= price * order.qty
+
+        ts = int(self.clock().timestamp() * 1000)
+        record_fill(order.id, ts, price, order.qty, 0.0, 0.0)
+        nav = self._cash + sum(
+            pos * self._last_price.get(sym, 0.0)
+            for sym, pos in self._positions.items()
+        )
+        exposure = sum(
+            abs(pos * self._last_price.get(sym, 0.0))
+            for sym, pos in self._positions.items()
+        )
+        record_equity(ts, nav, self._cash, exposure)
+
+=======
+        self._open_orders: Set[str] = set()
+        self._kill_switch_enabled = kill_switch
+        self._killed = False
+        self._heartbeat_interval = heartbeat_interval
+        self._timeout = timeout
+        self._max_retries = max_retries
+        self._last_ack = datetime.now(timezone.utc)
+        self._stop = threading.Event()
+        self._hb_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+        self._hb_thread.start()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+    def _with_retries(self, fn: Callable, *a, **k):
+        delay = 0.5
+        for attempt in range(1, self._max_retries + 1):
+            try:
+                return fn(*a, **k)
+            except Exception:  # pragma: no cover - network failure stub
+                if attempt == self._max_retries:
+                    raise
+                time.sleep(delay)
+                delay *= 2
+
+    def _record_ack(self) -> None:
+        self._last_ack = datetime.now(timezone.utc)
+
+    def _send_heartbeat(self) -> None:
+        print("HEARTBEAT")
+
+    def _heartbeat_loop(self) -> None:
+        while not self._stop.wait(self._heartbeat_interval):
+            if datetime.now(timezone.utc) - self._last_ack > timedelta(seconds=self._timeout):
+                self._on_disconnect()
+                continue
+            try:
+                self._with_retries(self._send_heartbeat)
+                self._record_ack()
+            except Exception:
+                pass
+
+    def _on_disconnect(self) -> None:
+        for oid in list(self._open_orders):
+            try:
+                self.cancel(oid)
+            except Exception:
+                pass
+        self._open_orders.clear()
+        if self._kill_switch_enabled:
+            self._killed = True
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+    def close(self) -> None:
+        """Stop the heartbeat thread."""
+
+        self._stop.set()
+        self._hb_thread.join(timeout=1)
+
+    def send(self, order: Order) -> str:  # pragma: no cover - stub
+        if self._killed:
+            raise RuntimeError("kill switch activated")
+
+        def _do_send() -> None:
+            print(f"LIVE ORDER -> {order.symbol} {order.qty}@{order.price}")
+
+        self._with_retries(_do_send)
+        self._positions[order.symbol] = self._positions.get(order.symbol, 0.0) + order.qty
+        self._open_orders.add(order.id)
+        self._record_ack()
+
+        return order.id
+
+    def cancel(self, order_id: str) -> None:  # pragma: no cover - stub
+        if self._killed:
+            raise RuntimeError("kill switch activated")
+
+        def _do_cancel() -> None:
+            print(f"CANCEL ORDER -> {order_id}")
+
+        self._with_retries(_do_cancel)
+        self._open_orders.discard(order_id)
+        self._record_ack()
+
 
     def positions(self) -> Dict[str, float]:  # pragma: no cover - trivial
         return dict(self._positions)

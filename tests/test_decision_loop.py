@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
+from collections import deque
 
 from quant_pipeline.decision import DecisionLoop
 from quant_pipeline.simple_lstm import SimpleLSTM
@@ -90,3 +91,66 @@ def test_decision_loop_sends_orders_and_reports_metrics(tmp_path):
     assert state_file.exists()
     saved = torch.load(state_file)
     assert "hidden" in saved
+
+
+def test_meta_model_filters_and_sizes():
+    ex = DummyExchange()
+    oms = OMS(ex, {"XYZ": {"tick_size": 1, "lot_size": 0, "min_notional": 0}})
+
+    class DummyModel:
+        def __init__(self):
+            self.outs = deque([1.0, -1.0])
+
+        def predict(self, _):
+            return np.array([self.outs.popleft()])
+
+    class DummyMeta:
+        def __init__(self):
+            self.probs = deque([0.8, 0.4])
+
+        def predict_proba(self, _):
+            p = self.probs.popleft()
+            return np.array([[1 - p, p]])
+
+    class DummyRisk:
+        atr_window = 1
+
+        def __init__(self):
+            self.last_prob = None
+
+        def target_position(self, *, prob, price, sigma, exposure_limits):
+            self.last_prob = prob
+            return prob
+
+        def atr_sl_tp(self, price, atr):
+            return 0.0, 0.0
+
+        def validate_order(self, **kwargs):
+            return True
+
+    risk = DummyRisk()
+    obs = Observability()
+    loop = DecisionLoop(
+        DummyModel(),
+        risk,
+        oms,
+        obs,
+        threshold=0.0,
+        cooldown=0,
+        meta_model=DummyMeta(),
+        p_long=0.7,
+        p_short=0.7,
+    )
+
+    bars = [
+        {"timestamp": 1, "symbol": "XYZ", "close": 100.0, "high": 101.0, "low": 99.0},
+        {"timestamp": 2, "symbol": "XYZ", "close": 101.0, "high": 102.0, "low": 100.0},
+    ]
+    for bar in bars:
+        loop.on_bar(bar)
+
+    assert len(ex.orders) == 1
+    order = ex.orders[0]
+    assert order["side"] == "buy"
+    assert order["qty"] == pytest.approx(0.6)
+    assert risk.last_prob == pytest.approx(0.6)

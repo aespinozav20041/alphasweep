@@ -1,7 +1,8 @@
-"""Helpers for writing and reading partitioned parquet tables."""
+"""Helpers for writing and reading partitioned parquet tables and SQLite logs."""
 
 from pathlib import Path
 from typing import Iterable, Optional, Sequence, Type
+import sqlite3
 
 import pandas as pd
 
@@ -16,6 +17,55 @@ from .models import (
 
 # Base directory for lake storage
 LAKE_PATH = Path(__file__).resolve().parents[2] / "lake"
+
+# SQLite database for runtime trading logs
+DATA_PATH = Path(__file__).resolve().parents[2] / "data"
+DB_PATH = DATA_PATH / "trading.db"
+_sql_conn: sqlite3.Connection | None = None
+
+
+def _db_conn(path: Path = DB_PATH) -> sqlite3.Connection:
+    """Return a SQLite connection creating required tables on first use."""
+
+    global _sql_conn
+    if _sql_conn is None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _sql_conn = sqlite3.connect(path)
+        _sql_conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS predictions (
+                symbol TEXT NOT NULL,
+                ts INTEGER NOT NULL,
+                yhat REAL NOT NULL,
+                p_long REAL NOT NULL,
+                p_short REAL NOT NULL
+            )
+            """
+        )
+        _sql_conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fills (
+                order_id TEXT PRIMARY KEY,
+                ts INTEGER NOT NULL,
+                price REAL NOT NULL,
+                qty REAL NOT NULL,
+                fees REAL NOT NULL,
+                slippage REAL NOT NULL
+            )
+            """
+        )
+        _sql_conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS equity (
+                ts INTEGER PRIMARY KEY,
+                nav REAL NOT NULL,
+                cash REAL NOT NULL,
+                exposure REAL NOT NULL
+            )
+            """
+        )
+        _sql_conn.commit()
+    return _sql_conn
 
 # Mapping between table names and their schemas.  Historically the OHLCV table
 # was referenced as either ``ohlcv`` or ``bar_ohlcv`` so we keep both aliases to
@@ -116,3 +166,61 @@ def read_table(
         else:
             df[col] = df[col].astype(str)
     return df[cols]
+
+
+# ---------------------------------------------------------------------------
+# SQLite logging helpers
+# ---------------------------------------------------------------------------
+
+def record_prediction(
+    symbol: str,
+    ts: int,
+    yhat: float,
+    p_long: float,
+    p_short: float,
+    db_path: Path = DB_PATH,
+) -> None:
+    """Persist a model prediction."""
+
+    conn = _db_conn(db_path)
+    conn.execute(
+        "INSERT INTO predictions(symbol, ts, yhat, p_long, p_short) VALUES (?,?,?,?,?)",
+        (symbol, int(ts), float(yhat), float(p_long), float(p_short)),
+    )
+    conn.commit()
+
+
+def record_fill(
+    order_id: str,
+    ts: int,
+    price: float,
+    qty: float,
+    fees: float,
+    slippage: float,
+    db_path: Path = DB_PATH,
+) -> None:
+    """Persist a fill record."""
+
+    conn = _db_conn(db_path)
+    conn.execute(
+        "INSERT INTO fills(order_id, ts, price, qty, fees, slippage) VALUES (?,?,?,?,?,?)",
+        (order_id, int(ts), float(price), float(qty), float(fees), float(slippage)),
+    )
+    conn.commit()
+
+
+def record_equity(
+    ts: int,
+    nav: float,
+    cash: float,
+    exposure: float,
+    db_path: Path = DB_PATH,
+) -> None:
+    """Persist an equity snapshot."""
+
+    conn = _db_conn(db_path)
+    conn.execute(
+        "INSERT INTO equity(ts, nav, cash, exposure) VALUES (?,?,?,?)",
+        (int(ts), float(nav), float(cash), float(exposure)),
+    )
+    conn.commit()
