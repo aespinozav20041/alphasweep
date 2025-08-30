@@ -15,3 +15,7 @@ execution:
 
 data:
   source: csv
+
+meta:
+  p_long: 0.6
+  p_short: 0.6
