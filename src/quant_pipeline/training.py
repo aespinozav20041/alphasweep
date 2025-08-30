@@ -17,7 +17,7 @@ from pathlib import Path
 from .datasets import make_lstm_windows
 from .model_registry import ModelRegistry
 from .labeling import forward_return, triple_barrier_labels
-from .backtest import run_backtest
+from search.ga_runner import run_engine_sim
 from .genetic import GeneticOptimizer
 
 logger = logging.getLogger(__name__)
@@ -65,13 +65,12 @@ def train_with_genetic(
     ]
 
     def fitness(x: np.ndarray) -> float:
-        pnl = run_backtest(
-            df,
-            x[:7],
-            threshold=float(x[7]),
-            ema_alpha=float(x[8]),
-            cooldown=int(round(x[9])),
-        )
+        costs = {
+            "threshold": float(x[7]),
+            "ema_alpha": float(x[8]),
+            "cooldown": int(round(x[9])),
+        }
+        pnl = run_engine_sim(x[:7], df, costs)
         return float(pnl)
 
     opt = GeneticOptimizer(
@@ -83,14 +82,12 @@ def train_with_genetic(
     best, _ = opt.optimise(generations=generations, patience=generations)
     best = best.tolist()
 
-    metrics = run_backtest(
-        df,
-        best[:7],
-        threshold=float(best[7]),
-        ema_alpha=float(best[8]),
-        cooldown=int(round(best[9])),
-        return_metrics=True,
-    )
+    costs = {
+        "threshold": float(best[7]),
+        "ema_alpha": float(best[8]),
+        "cooldown": int(round(best[9])),
+    }
+    metrics = run_engine_sim(best[:7], df, costs, return_metrics=True)
 
     params = {
         "n_lstm": int(round(best[0])),
