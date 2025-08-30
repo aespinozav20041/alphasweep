@@ -1,0 +1,15 @@
+thresholds:
+  sharpe_oos: 1.0
+  calmar_oos: 0.5
+  tracking_error_live: 0.1
+models:
+  - name: model_a
+    sharpe_is: 1.2
+    sharpe_oos: 1.1
+    calmar_oos: 0.6
+    tracking_error_live: 0.05
+  - name: model_b
+    sharpe_is: 0.8
+    sharpe_oos: 0.7
+    calmar_oos: 0.4
+    tracking_error_live: 0.15
