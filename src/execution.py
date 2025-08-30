@@ -15,13 +15,20 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+
+import threading
+from typing import Dict, List, Optional
+=======
 from typing import Callable, Dict, List, Optional
 =======
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Set, Callable
+
 import uuid
 import threading
 import time
+
+from quant_pipeline.observability import Observability
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +189,82 @@ class SimExecutionClient(ExecutionClient):
 
 
 class BrokerExecutionClient(ExecutionClient):
+    """Minimal live-trading client with heartbeat and reconnect logic."""
+
+    def __init__(self, observability: Observability | None = None, heartbeat_interval: float = 5.0):
+        self._positions: Dict[str, float] = {}
+        self.obs = observability or Observability()
+        self._heartbeat_interval = heartbeat_interval
+        self._pending_orders: Dict[str, Order] = {}
+        self._connected = False
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self.connect()
+        if heartbeat_interval > 0:
+            self._thread.start()
+
+    # ------------------------------------------------------------------
+    # Connection management
+    # ------------------------------------------------------------------
+    def connect(self) -> None:
+        """Establish connection to the broker (placeholder)."""
+
+        self._connected = True
+
+    def _ping(self) -> bool:  # pragma: no cover - simple stub
+        """Heartbeat check to broker API."""
+
+        return True
+
+    def check_connection(self) -> None:
+        """Verify connection and handle disconnects."""
+
+        ok = False
+        try:
+            ok = self._ping()
+        except Exception:
+            ok = False
+        if not ok:
+            self._connected = False
+            self.obs.alert_connection_failure("broker")
+            self._cancel_all_pending()
+            self.connect()
+        else:
+            self._connected = True
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._heartbeat_interval):
+            self.obs.heartbeat()
+            self.check_connection()
+
+    def close(self) -> None:
+        """Stop heartbeat thread."""
+
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join()
+
+    def _cancel_all_pending(self) -> None:
+        for oid in list(self._pending_orders):
+            self.cancel(oid)
+
+    # ------------------------------------------------------------------
+    # ExecutionClient interface
+    # ------------------------------------------------------------------
+    def send(self, order: Order) -> str:  # pragma: no cover - stub
+        if not self._connected:
+            self.connect()
+        print(f"LIVE ORDER -> {order.symbol} {order.qty}@{order.price}")
+        self._positions[order.symbol] = self._positions.get(order.symbol, 0.0) + order.qty
+        self._pending_orders[order.id] = order
+        self.obs.increment_orders_sent()
+        return order.id
+
+    def cancel(self, order_id: str) -> None:  # pragma: no cover - stub
+        print(f"CANCEL ORDER -> {order_id}")
+        self._pending_orders.pop(order_id, None)
+        self.obs.increment_order_errors()
+=======
     """Simple live-trading client with basic resiliency features.
 
     The implementation is intentionally lightweight, logging its actions
@@ -283,6 +366,7 @@ class BrokerExecutionClient(ExecutionClient):
         self._with_retries(_do_cancel)
         self._open_orders.discard(order_id)
         self._record_ack()
+
 
     def positions(self) -> Dict[str, float]:  # pragma: no cover - trivial
         return dict(self._positions)
