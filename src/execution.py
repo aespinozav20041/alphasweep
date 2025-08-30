@@ -30,6 +30,8 @@ import time
 
 from quant_pipeline.observability import Observability
 
+from quant_pipeline.storage import record_fill, record_equity
+
 
 # ---------------------------------------------------------------------------
 # Order representation
@@ -220,8 +222,16 @@ class SimExecutionClient(ExecutionClient):
         self.cost_model = cost_model or CostModel()
         self._positions: Dict[str, float] = {}
         self._ledger: List[Order] = []
+        self._cash: float = 0.0
+        self._last_price: Dict[str, float] = {}
 
     def send(self, order: Order) -> str:  # pragma: no cover - trivial
+
+        price = order.price or 0.0
+        slip_price = price * (1 + self.cost_model.slippage_bps / 10_000)
+        fee = price * abs(order.qty) * self.cost_model.fee_bps / 10_000
+        slippage_amt = (slip_price - price) * order.qty
+=======
         cost = self.cost_model.apply(
             order.price or 0.0,
             order.qty,
@@ -229,9 +239,24 @@ class SimExecutionClient(ExecutionClient):
             order.vol,
             order.volume,
         )
+  
         self._positions[order.symbol] = self._positions.get(order.symbol, 0.0) + order.qty
         self._ledger.append(order)
-        # In a real backtest we would store PnL including cost here.
+        self._last_price[order.symbol] = slip_price
+        self._cash -= slip_price * order.qty + fee
+
+        ts = int(self.clock().timestamp() * 1000)
+        record_fill(order.id, ts, slip_price, order.qty, fee, slippage_amt)
+        nav = self._cash + sum(
+            pos * self._last_price.get(sym, 0.0)
+            for sym, pos in self._positions.items()
+        )
+        exposure = sum(
+            abs(pos * self._last_price.get(sym, 0.0))
+            for sym, pos in self._positions.items()
+        )
+        record_equity(ts, nav, self._cash, exposure)
+
         return order.id
 
     def cancel(self, order_id: str) -> None:  # pragma: no cover - stub
@@ -339,6 +364,31 @@ class BrokerExecutionClient(ExecutionClient):
         kill_switch: bool = False,
     ):
         self._positions: Dict[str, float] = {}
+
+        self._cash: float = 0.0
+        self._last_price: Dict[str, float] = {}
+
+    def send(self, order: Order) -> str:  # pragma: no cover - stub
+        # Replace the print statements with real broker API calls.
+        price = order.price or 0.0
+        print(f"LIVE ORDER -> {order.symbol} {order.qty}@{price}")
+        self._positions[order.symbol] = self._positions.get(order.symbol, 0.0) + order.qty
+        self._last_price[order.symbol] = price
+        self._cash -= price * order.qty
+
+        ts = int(self.clock().timestamp() * 1000)
+        record_fill(order.id, ts, price, order.qty, 0.0, 0.0)
+        nav = self._cash + sum(
+            pos * self._last_price.get(sym, 0.0)
+            for sym, pos in self._positions.items()
+        )
+        exposure = sum(
+            abs(pos * self._last_price.get(sym, 0.0))
+            for sym, pos in self._positions.items()
+        )
+        record_equity(ts, nav, self._cash, exposure)
+
+=======
         self._open_orders: Set[str] = set()
         self._kill_switch_enabled = kill_switch
         self._killed = False
@@ -411,6 +461,7 @@ class BrokerExecutionClient(ExecutionClient):
         self._positions[order.symbol] = self._positions.get(order.symbol, 0.0) + order.qty
         self._open_orders.add(order.id)
         self._record_ack()
+
         return order.id
 
     def cancel(self, order_id: str) -> None:  # pragma: no cover - stub
