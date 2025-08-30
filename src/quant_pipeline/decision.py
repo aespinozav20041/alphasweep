@@ -85,8 +85,12 @@ class DecisionLoop:
         snapshot_interval: int = 0,
         median_window: int = 1,
         hysteresis: float = 0.0,
+        meta_model: object | None = None,
+        p_long: float = 0.5,
+        p_short: float = 0.5,
     ) -> None:
         self.model = model
+        self.meta_model = meta_model
         self.risk = risk
         self.oms = oms
         self.obs = obs
@@ -94,6 +98,8 @@ class DecisionLoop:
         self.alpha = 2.0 / (ema_span + 1.0)
         self.threshold = threshold
         self.cooldown = cooldown
+        self.p_long = p_long
+        self.p_short = p_short
         self._ema = 0.0
         self._cooldown = 0
         self.median_window = median_window
@@ -198,6 +204,17 @@ class DecisionLoop:
         else:
             if abs(signal) < self.threshold:
                 return
+        direction = 1 if signal > 0 else -1
+        prob = signal
+        if self.meta_model is not None:
+            if hasattr(self.meta_model, "predict_proba"):
+                meta_prob = float(self.meta_model.predict_proba(scaled_window)[0, 1])
+            else:
+                meta_prob = float(self.meta_model.predict(scaled_window)[0])
+            thresh = self.p_long if direction > 0 else self.p_short
+            if meta_prob < thresh:
+                return
+            prob = (meta_prob - 0.5) * 2 * direction
         self._cooldown = self.cooldown
         symbol = bar["symbol"]
         price = float(bar["close"])
@@ -210,7 +227,7 @@ class DecisionLoop:
             "regime": "bull",
         }
         target = self.risk.target_position(
-            prob=signal, price=price, sigma=sigma, exposure_limits=exposure_limits
+            prob=prob, price=price, sigma=sigma, exposure_limits=exposure_limits
         )
         atr = self.atr.update(bar)
         _sl, _tp = self.risk.atr_sl_tp(price, atr)

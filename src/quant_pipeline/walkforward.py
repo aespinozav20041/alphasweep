@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
-from sklearn.calibration import CalibratedClassifierCV
+from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 
 from .model_registry import ModelRegistry
 
@@ -110,6 +110,13 @@ def walkforward(
         if calibrate and hasattr(model, "predict_proba"):
             # Only attempt probability calibration for classification models.
             model = _calibrate(model, X_train, y_train, calibrate)
+            if registry and model_id is not None:
+                prob_true, prob_pred = calibration_curve(
+                    y_train, model.predict_proba(X_train)[:, 1], n_bins=10, strategy="quantile"
+                )
+                registry.log_calibration_curve(
+                    model_id, prob_true=prob_true.tolist(), prob_pred=prob_pred.tolist()
+                )
 
         y_prob = model.predict_proba(X_test)[:, 1]
         metric = metric_func(y_test, y_prob)
@@ -117,7 +124,13 @@ def walkforward(
         params_hist.append(params)
 
         if registry and model_id is not None:
-            registry.log_oos_metrics(model_id, params=params, metrics={"metric": metric})
+            registry.log_oos_metrics(
+                model_id,
+                params=params,
+                metrics={"metric": metric},
+                y_true=y_test,
+                y_prob=y_prob,
+            )
 
         start += step
 

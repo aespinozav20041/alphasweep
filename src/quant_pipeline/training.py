@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Callable, Dict, Iterator, Tuple
+from typing import Any, Callable, Dict, Iterator, Tuple, Sequence
 
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -17,7 +17,12 @@ from pathlib import Path
 from .datasets import make_lstm_windows
 from .model_registry import ModelRegistry
 from .labeling import forward_return, triple_barrier_labels
+
+from .backtest import run_backtest
+from .ensemble import blend_horizons
+=======
 from search.ga_runner import run_engine_sim
+
 from .genetic import GeneticOptimizer
 
 logger = logging.getLogger(__name__)
@@ -135,7 +140,7 @@ class AutoTrainer:
         seq_len: int = 10,
         cv_splits: int = 5,
         embargo: int = 0,
-        label_horizon: int | None = None,
+        label_horizon: int | Sequence[int] | None = None,
         label_up_mult: float = 1.0,
         label_down_mult: float = 1.0,
         label_type: str = "triple_barrier",
@@ -198,17 +203,28 @@ class AutoTrainer:
         df = self.dataset_loader(self.history_days)
         if self.label_horizon is not None:
             df = df.copy()
+            horizons: Sequence[int]
+            if isinstance(self.label_horizon, Sequence) and not isinstance(
+                self.label_horizon, (str, bytes)
+            ):
+                horizons = list(self.label_horizon)
+            else:
+                horizons = [int(self.label_horizon)]
+
+            signals: Dict[int, np.ndarray]
             if self.label_type == "forward_return":
-                df["label"] = forward_return(df, self.label_horizon)
+                signals = {h: forward_return(df, h) for h in horizons}
             elif self.label_type == "triple_barrier":
-                df["label"] = triple_barrier_labels(
-                    df,
-                    self.label_up_mult,
-                    self.label_down_mult,
-                    self.label_horizon,
-                )
+                signals = {
+                    h: triple_barrier_labels(
+                        df, self.label_up_mult, self.label_down_mult, h
+                    )
+                    for h in horizons
+                }
             else:
                 raise ValueError(f"unknown label_type {self.label_type}")
+
+            df["label"] = blend_horizons(signals)
 
         if "label" in df.columns:
             dataset = self.prepare_dataset(df)

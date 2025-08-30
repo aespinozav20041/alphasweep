@@ -129,3 +129,20 @@ def test_load_risk_config(tmp_path):
     cfg = load_risk_config(path)
     assert cfg.max_dd_daily == 0.07
     assert cfg.pause_minutes == 5
+
+
+def test_trailing_stop_in_target_position():
+    rm = RiskManager(
+        max_dd_daily=1,
+        max_dd_weekly=1,
+        latency_threshold=100,
+        latency_window=1,
+        pause_minutes=1,
+        trailing_on=True,
+        trailing_mult=0.02,
+    )
+    exposure = {"symbol": "BTC", "current_position": 1.0, "total_notional": 0.0}
+    rm.target_position(prob=0.01, price=100.0, sigma=0.1, exposure_limits=exposure)
+    rm.target_position(prob=0.01, price=110.0, sigma=0.1, exposure_limits=exposure)
+    tgt = rm.target_position(prob=0.01, price=107.0, sigma=0.1, exposure_limits=exposure)
+    assert tgt == 0.0

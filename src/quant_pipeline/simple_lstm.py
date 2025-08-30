@@ -10,8 +10,10 @@ import pandas as pd
 import torch
 from torch import Tensor, nn
 
+from .strategy import Strategy
 
-class SimpleLSTM(nn.Module):
+
+class SimpleLSTM(nn.Module, Strategy):
     """Tiny LSTM network keeping state across calls.
 
     The model is purposely minimal but uses a real :class:`~torch.nn.LSTM`
@@ -99,7 +101,7 @@ class SimpleLSTM(nn.Module):
         # reset hidden state so future predictions start fresh
         self.hidden = None
 
-    def predict(self, feats: pd.DataFrame | np.ndarray) -> list[float]:
+    def predict(self, feats: pd.DataFrame | np.ndarray) -> np.ndarray:
         """Generate prediction for a window of features."""
 
         if isinstance(feats, pd.DataFrame):
@@ -114,7 +116,7 @@ class SimpleLSTM(nn.Module):
         # detach hidden state so it can be serialised
         if isinstance(self.hidden, tuple):
             self.hidden = tuple(h.detach() for h in self.hidden)
-        return pred.view(-1).tolist()
+        return pred.view(-1).cpu().numpy()
 
 
 __all__ = ["SimpleLSTM"]

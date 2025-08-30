@@ -14,6 +14,11 @@ from typing import Any, Callable, Optional
 from execution import ExecutionClient, Order
 from risk import RiskManager
 
+from quant_pipeline.storage import record_prediction
+=======
+from trading import sor
+
+
 
 @dataclass
 class TradingEngine:
@@ -34,27 +39,65 @@ class TradingEngine:
     def on_bar(self, market_data: Any) -> Optional[str]:
         """Process one market data event and optionally send an order."""
 
+
+        self.risk_manager.update_price(
+            getattr(market_data, "symbol", ""), getattr(market_data, "price", 0.0)
+        )
+=======
+
+
         features = self.feature_builder(market_data)
         signal = float(self.model.predict(features))
+
+        ts = getattr(market_data, "timestamp", int(self.execution_client.clock().timestamp() * 1000))
+        symbol = getattr(market_data, "symbol", "")
+        p_long = p_short = 0.0
+        prob_fn = getattr(self.model, "predict_proba", None)
+        if prob_fn is not None:
+            try:
+                probs = prob_fn(features)
+                if isinstance(probs, (list, tuple)) and len(probs) >= 2:
+                    p_short = float(probs[0])
+                    p_long = float(probs[1])
+            except Exception:
+                pass
+        record_prediction(symbol, ts, signal, p_long, p_short)
+
+=======
+        bar = self.feature_builder(market_data)
+        symbol = getattr(market_data, "symbol", "")
+        signal = float(self.model.predict(bar, symbol=symbol))
         qty = self.size_fn(signal)
         if qty == 0:
             return None
         side_price = getattr(market_data, "price", None)
-        order = Order(symbol=getattr(market_data, "symbol", ""), qty=qty, price=side_price)
+        order = Order(
+            symbol=getattr(market_data, "symbol", ""),
+            qty=qty,
+            price=side_price,
+            spread=getattr(market_data, "spread", 0.0),
+            vol=getattr(market_data, "volatility", 0.0),
+            volume=getattr(market_data, "volume", 0.0),
+        )
         if not self.risk_manager.pre_trade(order, self.execution_client.positions()):
             return None
+
         symbol_state = {
             "spread": getattr(market_data, "spread", 0.0),
             "volatility": getattr(market_data, "volatility", 0.0),
             "volume": getattr(market_data, "volume", float("inf")),
         }
         order_id = self.execution_client.send(order, symbol_state)
+=======
+        order_id = sor.route_order(order, self.execution_client)
+
         self.risk_manager.post_trade(order, self.execution_client.positions())
 =======
         order = self.risk_manager.limit_order(order)
         order_id = self.execution_client.send(order)
         atr = getattr(market_data, "atr", None)
         self.risk_manager.post_trade(order, self.execution_client.positions(), atr=atr)
+
         return order_id
 
     # Convenience aliases ------------------------------------------------
