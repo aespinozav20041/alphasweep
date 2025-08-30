@@ -9,10 +9,42 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
+import numpy as np
+import pandas as pd
 import yaml
 
 
 logger = logging.getLogger(__name__)
+
+
+def rolling_covariance(returns: pd.DataFrame, window: int = 60) -> np.ndarray:
+    """Compute rolling covariance matrix for recent returns."""
+
+    if len(returns) < 2:
+        raise ValueError("need at least two observations")
+    win = min(len(returns), window)
+    return returns.tail(win).cov().to_numpy()
+
+
+def risk_parity_weights(
+    cov: np.ndarray, *, tol: float = 1e-8, max_iter: int = 1000
+) -> np.ndarray:
+    """Compute risk-parity weights from a covariance matrix."""
+
+    n = cov.shape[0]
+    w = np.ones(n) / n
+    for _ in range(max_iter):
+        port_var = w @ cov @ w
+        mrc = cov @ w
+        rc = w * mrc
+        target = port_var / n
+        diff = rc - target
+        if np.all(np.abs(diff) < tol):
+            break
+        w -= diff / (mrc + 1e-12)
+        w = np.clip(w, 1e-12, None)
+        w /= w.sum()
+    return w
 
 
 @dataclass

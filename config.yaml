@@ -5,6 +5,9 @@ mode: backtest
 
 risk:
   max_position: 10
+  trailing:
+    enabled: false
+    atr_mult_trail: 3.0
 
 execution:
   fee_bps: 1      # commissions in basis points
@@ -12,3 +15,7 @@ execution:
 
 data:
   source: csv
+
+meta:
+  p_long: 0.6
+  p_short: 0.6
