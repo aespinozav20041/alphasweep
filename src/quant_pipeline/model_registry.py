@@ -6,11 +6,30 @@ import json
 import shutil
 import sqlite3
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 import numpy as np
+from sklearn.calibration import calibration_curve
+
+
+def plot_calibration(prob_pred: np.ndarray, prob_true: np.ndarray, *, path: Path) -> None:
+    """Plot and save a calibration curve."""
+
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    ax.plot(prob_pred, prob_true, marker="o", label="Empirical")
+    ax.plot([0, 1], [0, 1], linestyle="--", label="Perfect")
+    ax.set_xlabel("Predicted probability")
+    ax.set_ylabel("Empirical probability")
+    ax.set_title("Calibration curve")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
 
 try:  # optional MLflow integration
     import mlflow  # type: ignore
@@ -41,7 +60,8 @@ class ModelRegistry:
     """SQLite backed registry for models and their performance."""
 
     def __init__(self, db_path: str) -> None:
-        self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        self.db_path = Path(db_path)
+        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         self._init_schema()
@@ -190,9 +210,38 @@ class ModelRegistry:
         *,
         params: Dict,
         metrics: Dict,
+        y_true: Optional[np.ndarray] = None,
+        y_prob: Optional[np.ndarray] = None,
         ts: Optional[int] = None,
     ) -> None:
         """Record out-of-sample metrics and parameters for a model."""
+
+        ts = ts or int(time.time())
+
+        if y_true is not None and y_prob is not None:
+            prob_true, prob_pred = calibration_curve(y_true, y_prob, n_bins=10)
+            data = [
+                {"prob": float(p), "empirical": float(t)}
+                for p, t in zip(prob_pred, prob_true)
+            ]
+            calib_dir = self.db_path.parent / "calibration"
+            calib_dir.mkdir(parents=True, exist_ok=True)
+            base = calib_dir / f"model_{model_id}_{ts}"
+            json_path = base.with_suffix(".json")
+            csv_path = base.with_suffix(".csv")
+            png_path = base.with_suffix(".png")
+            with open(json_path, "w") as f:
+                json.dump(data, f)
+            with open(csv_path, "w") as f:
+                f.write("prob,empirical\n")
+                for row in data:
+                    f.write(f"{row['prob']},{row['empirical']}\n")
+            plot_calibration(np.array([d["prob"] for d in data]), np.array([d["empirical"] for d in data]), path=png_path)
+            metrics = dict(metrics)
+            metrics["calibration_curve"] = data
+            metrics["calibration_json"] = str(json_path)
+            metrics["calibration_csv"] = str(csv_path)
+            metrics["calibration_png"] = str(png_path)
 
         with self._lock:
             cur = self.conn.cursor()
@@ -420,4 +469,4 @@ class ChampionReloader:
         return self.model
 
 
-__all__ = ["ModelRegistry", "ChampionReloader", "ModelRecord"]
+__all__ = ["ModelRegistry", "ChampionReloader", "ModelRecord", "plot_calibration"]
