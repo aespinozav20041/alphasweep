@@ -124,7 +124,13 @@ def walkforward(
         params_hist.append(params)
 
         if registry and model_id is not None:
-            registry.log_oos_metrics(model_id, params=params, metrics={"metric": metric})
+            registry.log_oos_metrics(
+                model_id,
+                params=params,
+                metrics={"metric": metric},
+                y_true=y_test,
+                y_prob=y_prob,
+            )
 
         start += step
 

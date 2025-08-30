@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from sklearn.datasets import make_classification
 from sklearn.linear_model import LogisticRegression
 
@@ -46,5 +47,12 @@ def test_walkforward_logs_oos_and_stability(tmp_path):
     assert "coef" in params
     assert "metric" in metrics
 
+
     calib_rows = reg.list_calibration_curves(model_id)
     assert len(calib_rows) == 3
+=======
+    assert "calibration_curve" in metrics
+    for k in ["calibration_json", "calibration_csv", "calibration_png"]:
+        p = Path(metrics[k])
+        assert p.exists()
+

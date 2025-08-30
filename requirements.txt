@@ -21,3 +21,4 @@ pytest
 ib-insync
 alpaca-trade-api
 torch
+matplotlib
