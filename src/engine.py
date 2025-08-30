@@ -40,6 +40,12 @@ class TradingEngine:
         """Process one market data event and optionally send an order."""
 
 
+        self.risk_manager.update_price(
+            getattr(market_data, "symbol", ""), getattr(market_data, "price", 0.0)
+        )
+=======
+
+
         features = self.feature_builder(market_data)
         signal = float(self.model.predict(features))
 

@@ -342,6 +342,16 @@ class BrokerExecutionClient(ExecutionClient):
         self.obs.increment_orders_sent()
         return order.id
 
+
+    A :class:`CostModel` is used to record fees and slippage so that
+    live trading can track realised costs similar to the simulator.  The
+    client keeps a ledger of submitted orders which are cancelled upon
+    disconnect.
+    """
+
+    def __init__(self, cost_model: Optional[CostModel] = None):
+        self.cost_model = cost_model or CostModel()
+=======
     def cancel(self, order_id: str) -> None:  # pragma: no cover - stub
         print(f"CANCEL ORDER -> {order_id}")
         self._pending_orders.pop(order_id, None)
@@ -364,11 +374,34 @@ class BrokerExecutionClient(ExecutionClient):
         kill_switch: bool = False,
     ):
         self._positions: Dict[str, float] = {}
+        self._orders: Dict[str, Order] = {}
+        self._ledger: List[Dict[str, float]] = []
 
         self._cash: float = 0.0
         self._last_price: Dict[str, float] = {}
 
     def send(self, order: Order) -> str:  # pragma: no cover - stub
+
+        cost = self.cost_model.apply(order.price or 0.0, order.qty)
+        print(f"LIVE ORDER -> {order.symbol} {order.qty}@{order.price} cost={cost:.4f}")
+        self._positions[order.symbol] = self._positions.get(order.symbol, 0.0) + order.qty
+        self._orders[order.id] = order
+        self._ledger.append({"id": order.id, "cost": cost})
+        return order.id
+
+    def cancel(self, order_id: str) -> None:  # pragma: no cover - stub
+        print(f"CANCEL ORDER -> {order_id}")
+        self._orders.pop(order_id, None)
+
+    def cancel_all(self) -> None:  # pragma: no cover - stub
+        for oid in list(self._orders.keys()):
+            self.cancel(oid)
+
+    def handle_disconnect(self) -> None:  # pragma: no cover - stub
+        """Cancel all resting orders on a disconnect event."""
+
+        self.cancel_all()
+=======
         # Replace the print statements with real broker API calls.
         price = order.price or 0.0
         print(f"LIVE ORDER -> {order.symbol} {order.qty}@{price}")
@@ -474,6 +507,7 @@ class BrokerExecutionClient(ExecutionClient):
         self._with_retries(_do_cancel)
         self._open_orders.discard(order_id)
         self._record_ack()
+
 
 
     def positions(self) -> Dict[str, float]:  # pragma: no cover - trivial
