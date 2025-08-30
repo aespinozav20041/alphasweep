@@ -158,6 +158,8 @@ class RiskManager:
         tp_atr: float = 6.0,
         atr_window: int = 14,
         regime_reduction: float = 0.5,
+        trailing_on: bool = False,
+        trailing_mult: float = 0.02,
     ) -> None:
         self.max_dd_daily = max_dd_daily
         self.max_dd_weekly = max_dd_weekly
@@ -177,6 +179,11 @@ class RiskManager:
         self.tp_atr = tp_atr
         self.atr_window = atr_window
         self.regime_reduction = regime_reduction
+        self.trailing_on = trailing_on
+        self.trailing_mult = trailing_mult
+        self.trailing_stop: Optional[float] = None
+        self._trail_price: Optional[float] = None
+        self._current_position: float = 0.0
         self.pause_until: Optional[datetime] = None
         self._daily_dd = 0.0
         self._weekly_dd = 0.0
@@ -291,6 +298,31 @@ class RiskManager:
         kelly *= self.kelly_fraction
         return kelly * (self.target_volatility / sigma)
 
+    def update_trailing(self, price: float) -> float | None:
+        """Update trailing stop based on a favorable price move.
+
+        The method maintains the highest price reached for long positions
+        and the lowest for shorts.  The stop follows the extreme by
+        ``trailing_mult`` percent.
+        """
+
+        if not self.trailing_on or self._current_position == 0:
+            return self.trailing_stop
+
+        if self._current_position > 0:
+            if self._trail_price is None or price > self._trail_price:
+                self._trail_price = price
+            new_stop = self._trail_price * (1 - self.trailing_mult)
+            if self.trailing_stop is None or new_stop > self.trailing_stop:
+                self.trailing_stop = new_stop
+        else:
+            if self._trail_price is None or price < self._trail_price:
+                self._trail_price = price
+            new_stop = self._trail_price * (1 + self.trailing_mult)
+            if self.trailing_stop is None or new_stop < self.trailing_stop:
+                self.trailing_stop = new_stop
+        return self.trailing_stop
+
     def target_position(
         self,
         prob: float,
@@ -318,6 +350,21 @@ class RiskManager:
         regime = exposure_limits.get("regime")
         current_pos = float(exposure_limits.get("current_position", 0.0))
         total_notional = float(exposure_limits.get("total_notional", 0.0))
+
+        if self.trailing_on:
+            self._current_position = current_pos
+            if current_pos == 0:
+                self.trailing_stop = None
+                self._trail_price = None
+            else:
+                self.update_trailing(price)
+                if self.trailing_stop is not None:
+                    hit_long = current_pos > 0 and price <= self.trailing_stop
+                    hit_short = current_pos < 0 and price >= self.trailing_stop
+                    if hit_long or hit_short:
+                        self.trailing_stop = None
+                        self._trail_price = None
+                        return 0.0
 
         # Base Kelly position scaled to target volatility
         target = self.kelly_position(mu=prob, sigma=sigma)

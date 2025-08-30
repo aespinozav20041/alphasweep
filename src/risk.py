@@ -30,14 +30,22 @@ class RiskManager:
     more sophisticated checks (drawdown, latency, etc.).
     """
 
-    def __init__(self, limits: RiskLimits):
+    def __init__(self, limits: RiskLimits, *, trailing_on: bool = False, trailing_mult: float = 0.02):
         self.limits = limits
+
+        self.trailing_on = trailing_on
+        self.trailing_mult = trailing_mult
+        self.trailing_stop: Optional[float] = None
+        self._trail_price: Optional[float] = None
+        self._current_position: float = 0.0
+=======
         self.trailing_enabled = limits.trailing_enabled
         self.atr_mult_trail = limits.atr_mult_trail
         # trailing stop per symbol
         self._trail: Dict[str, float] = {}
         # record of extreme prices per symbol
         self._extreme: Dict[str, float] = {}
+
 
     # ------------------------------------------------------------------
     # Hooks called by the engine
@@ -49,6 +57,20 @@ class RiskManager:
         proposed = current + order.qty
         if abs(proposed) > self.limits.max_position:
             return False
+
+        if self.trailing_on and order.price is not None:
+            self._current_position = current
+            if current == 0:
+                self.trailing_stop = None
+                self._trail_price = None
+            else:
+                self.update_trailing(order.price)
+                if self.trailing_stop is not None:
+                    hit_long = current > 0 and order.price <= self.trailing_stop and order.qty > 0
+                    hit_short = current < 0 and order.price >= self.trailing_stop and order.qty < 0
+                    if hit_long or hit_short:
+                        return False
+
         return True
 
     def post_trade(
@@ -107,6 +129,14 @@ class RiskManager:
         adjusted so that it cannot cross the trailing level.
         """
 
+
+        if self.trailing_on:
+            current = positions.get(order.symbol, 0.0)
+            if current == 0:
+                self.trailing_stop = None
+                self._trail_price = None
+        return
+=======
         if not self.trailing_enabled:
             return order
         stop = self._trail.get(order.symbol)
@@ -119,4 +149,25 @@ class RiskManager:
             if order.price is None or order.price > stop:
                 order.price = stop
         return order
+
+
+    def update_trailing(self, price: float) -> float | None:
+        """Update trailing stop based on a favorable move."""
+
+        if not self.trailing_on or self._current_position == 0:
+            return self.trailing_stop
+
+        if self._current_position > 0:
+            if self._trail_price is None or price > self._trail_price:
+                self._trail_price = price
+            new_stop = self._trail_price * (1 - self.trailing_mult)
+            if self.trailing_stop is None or new_stop > self.trailing_stop:
+                self.trailing_stop = new_stop
+        else:
+            if self._trail_price is None or price < self._trail_price:
+                self._trail_price = price
+            new_stop = self._trail_price * (1 + self.trailing_mult)
+            if self.trailing_stop is None or new_stop < self.trailing_stop:
+                self.trailing_stop = new_stop
+        return self.trailing_stop
 
