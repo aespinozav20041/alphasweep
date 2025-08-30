@@ -106,32 +106,88 @@ class ExecutionClient(ABC):
 
 
 # ---------------------------------------------------------------------------
-# Helper: simple cost model used by the simulator
+# Helper structures and cost model used by the simulator
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class FeeSchedule:
+    """Maker/taker fee schedule per exchange and tier in basis points."""
+
+    fees: Dict[str, Dict[str, Dict[str, float]]]
+
+    def get(self, exchange: str, tier: str, side: str) -> float:
+        """Return the fee (in bps) for the given exchange, tier and side."""
+
+        return self.fees.get(exchange, {}).get(tier, {}).get(side, 0.0)
+
 
 class CostModel:
     """Applies slippage and fees in basis points.
 
+
+=======
     A custom ``slippage_fn`` can be provided to model more advanced
     behaviors. The function receives the current bar's ``spread``,
     ``vol`` (volatility) and ``volume`` and returns slippage in basis
     points.
     """
 
+
     def __init__(
         self,
         fee_bps: float = 0.0,
         slippage_bps: float = 0.0,
+
+        fee_schedule: Optional[FeeSchedule] = None,
+    ):
+        # ``fee_bps`` provides a simple flat fee for backwards compatibility
+        self.fee_bps = fee_bps
+        self.slippage_bps = slippage_bps
+        self.fee_schedule = fee_schedule
+=======
         slippage_fn: Optional[Callable[[float, float, float], float]] = None,
     ):
         self.fee_bps = fee_bps
         self.slippage_bps = slippage_bps
         self.slippage_fn = slippage_fn
 
+
     def apply(
         self,
         price: float,
         qty: float,
+
+        side: str = "taker",
+        exchange: str = "default",
+        tier: str = "0",
+    ) -> float:
+        """Return total cost including slippage and fees.
+
+        Parameters
+        ----------
+        price:
+            Fill price of the order.
+        qty:
+            Executed quantity. Positive for buys, negative for sells.
+        side:
+            Either ``"maker"`` or ``"taker"``; selects the fee from the
+            schedule.  Defaults to ``"taker"``.
+        exchange:
+            Exchange identifier used in the fee schedule. Defaults to
+            ``"default"``.
+        tier:
+            Volume tier used in the fee schedule. Defaults to ``"0"``.
+        """
+
+        slip_price = price * (1 + self.slippage_bps / 10_000)
+
+        fee_bps = self.fee_bps
+        if self.fee_schedule is not None:
+            fee_bps = self.fee_schedule.get(exchange, tier, side)
+
+        fee = price * abs(qty) * fee_bps / 10_000
+=======
         spread: float = 0.0,
         vol: float = 0.0,
         volume: float = 0.0,
@@ -145,6 +201,7 @@ class CostModel:
         )
         slip_price = price * (1 + slip_bps / 10_000)
         fee = price * abs(qty) * self.fee_bps / 10_000
+
         return slip_price * qty + fee
 
 
