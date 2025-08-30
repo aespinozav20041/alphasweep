@@ -64,6 +64,35 @@ def _db_conn(path: Path = DB_PATH) -> sqlite3.Connection:
             )
             """
         )
+        _sql_conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS stress_runs (
+                scenario TEXT,
+                sharpe REAL
+            )
+            """
+        )
+        _sql_conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS promotion_events (
+                ts TEXT,
+                old TEXT,
+                new TEXT
+            )
+            """
+        )
+        _sql_conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS pnl_attrib (
+                date TEXT,
+                model TEXT,
+                strategy TEXT,
+                horizon TEXT,
+                symbol TEXT,
+                pnl REAL
+            )
+            """
+        )
         _sql_conn.commit()
     return _sql_conn
 

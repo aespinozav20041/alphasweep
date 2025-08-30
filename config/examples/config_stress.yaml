@@ -1,0 +1,17 @@
+engine: {}
+scenarios:
+  - name: baseline
+    latency_factor: 1.0
+    fees_factor: 1.0
+    spread_factor: 1.0
+  - name: high_spread
+    spread_factor: 3.0
+  - name: high_fees
+    fees_factor: 2.0
+  - name: halt_event
+    trading_halts:
+      - [10, 20]
+  - name: combo
+    latency_factor: 2.0
+    fees_factor: 2.0
+    spread_factor: 3.0
