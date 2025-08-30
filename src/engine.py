@@ -81,7 +81,16 @@ class TradingEngine:
         )
         if not self.risk_manager.pre_trade(order, self.execution_client.positions()):
             return None
+
+        symbol_state = {
+            "spread": getattr(market_data, "spread", 0.0),
+            "volatility": getattr(market_data, "volatility", 0.0),
+            "volume": getattr(market_data, "volume", float("inf")),
+        }
+        order_id = self.execution_client.send(order, symbol_state)
+=======
         order_id = sor.route_order(order, self.execution_client)
+
         self.risk_manager.post_trade(order, self.execution_client.positions())
 =======
         order = self.risk_manager.limit_order(order)

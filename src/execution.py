@@ -16,6 +16,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from typing import Dict, List, Optional, Sequence, Tuple
+=======
+
 import threading
 from typing import Dict, List, Optional
 =======
@@ -24,6 +27,7 @@ from typing import Callable, Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Set, Callable
 
+
 import uuid
 import threading
 import time
@@ -31,6 +35,8 @@ import time
 from quant_pipeline.observability import Observability
 
 from quant_pipeline.storage import record_fill, record_equity
+
+import numpy as np
 
 
 # ---------------------------------------------------------------------------
@@ -85,8 +91,16 @@ class ExecutionClient(ABC):
     """
 
     @abstractmethod
-    def send(self, order: Order) -> str:
+    def send(self, order: Order, symbol_state: Optional[Dict[str, float]] = None) -> str:
         """Send an order to the venue.
+
+        Parameters
+        ----------
+        order:
+            Order instance to be sent.
+        symbol_state:
+            Optional dictionary containing market state information such as
+            spread, volatility and volume.
 
         Returns
         -------
@@ -125,6 +139,76 @@ class FeeSchedule:
 
 
 class CostModel:
+
+    """Applies linear slippage and fees in basis points.
+
+    The model also supports a simple spread/volatility/volume based
+    slippage estimate calibrated per symbol.
+    """
+
+    def __init__(
+        self,
+        fee_bps: float = 0.0,
+        slippage_bps: float = 0.0,
+        coeffs: Optional[Dict[str, Tuple[float, float, float]]] = None,
+    ):
+        self.fee_bps = fee_bps
+        self.slippage_bps = slippage_bps
+        self.coeffs: Dict[str, Tuple[float, float, float]] = coeffs or {}
+
+    # ------------------------------------------------------------------
+    def spread_vol_volume(self, symbol_state: Dict[str, float], order: Order) -> float:
+        """Return slippage estimate based on market state.
+
+        Parameters
+        ----------
+        symbol_state:
+            Dictionary with keys ``spread``, ``volatility`` and ``volume``.
+        order:
+            :class:`Order` instance for which the cost is being evaluated.
+        """
+
+        a, b, c = self.coeffs.get(order.symbol, (0.0, 0.0, 0.0))
+        spread = symbol_state.get("spread", 0.0)
+        vol = symbol_state.get("volatility", 0.0)
+        volume = symbol_state.get("volume", float("inf"))
+        if volume == 0:
+            volume = float("inf")
+        return a * spread + b * vol + c * abs(order.qty) / volume
+
+    def calibrate(
+        self,
+        symbol: str,
+        spreads: Sequence[float],
+        volatilities: Sequence[float],
+        qtys: Sequence[float],
+        volumes: Sequence[float],
+        slips: Sequence[float],
+    ) -> Tuple[float, float, float]:
+        """Calibrate ``a``, ``b`` and ``c`` for a symbol using least squares."""
+
+        X = np.column_stack([spreads, volatilities, np.abs(qtys) / volumes])
+        y = np.asarray(slips)
+        coeffs, *_ = np.linalg.lstsq(X, y, rcond=None)
+        a, b, c = coeffs.tolist()
+        self.coeffs[symbol] = (a, b, c)
+        return self.coeffs[symbol]
+
+    def apply(
+        self,
+        price: float,
+        qty: float,
+        symbol_state: Optional[Dict[str, float]] = None,
+        order: Optional[Order] = None,
+    ) -> float:
+        """Return total cost including slippage and fees."""
+
+        if symbol_state is not None and order is not None:
+            slip = self.spread_vol_volume(symbol_state, order)
+            slip_price = price + slip
+        else:
+            slip_price = price * (1 + self.slippage_bps / 10_000)
+=======
     """Applies slippage and fees in basis points.
 
 
@@ -202,6 +286,7 @@ class CostModel:
             else self.slippage_bps
         )
         slip_price = price * (1 + slip_bps / 10_000)
+
         fee = price * abs(qty) * self.fee_bps / 10_000
 
         return slip_price * qty + fee
@@ -225,6 +310,13 @@ class SimExecutionClient(ExecutionClient):
         self._cash: float = 0.0
         self._last_price: Dict[str, float] = {}
 
+
+    def send(
+        self, order: Order, symbol_state: Optional[Dict[str, float]] = None
+    ) -> str:  # pragma: no cover - trivial
+        symbol_state = symbol_state or {}
+        cost = self.cost_model.apply(order.price or 0.0, order.qty, symbol_state, order)
+=======
     def send(self, order: Order) -> str:  # pragma: no cover - trivial
 
         price = order.price or 0.0
@@ -240,6 +332,7 @@ class SimExecutionClient(ExecutionClient):
             order.volume,
         )
   
+
         self._positions[order.symbol] = self._positions.get(order.symbol, 0.0) + order.qty
         self._ledger.append(order)
         self._last_price[order.symbol] = slip_price
@@ -380,10 +473,18 @@ class BrokerExecutionClient(ExecutionClient):
         self._cash: float = 0.0
         self._last_price: Dict[str, float] = {}
 
+
+    def send(
+        self, order: Order, symbol_state: Optional[Dict[str, float]] = None
+    ) -> str:  # pragma: no cover - stub
+        # Replace the print statements with real broker API calls.
+        print(f"LIVE ORDER -> {order.symbol} {order.qty}@{order.price}")
+=======
     def send(self, order: Order) -> str:  # pragma: no cover - stub
 
         cost = self.cost_model.apply(order.price or 0.0, order.qty)
         print(f"LIVE ORDER -> {order.symbol} {order.qty}@{order.price} cost={cost:.4f}")
+
         self._positions[order.symbol] = self._positions.get(order.symbol, 0.0) + order.qty
         self._orders[order.id] = order
         self._ledger.append({"id": order.id, "cost": cost})
