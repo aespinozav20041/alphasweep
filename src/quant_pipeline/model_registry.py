@@ -12,6 +12,11 @@ from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
+try:  # optional MLflow integration
+    import mlflow  # type: ignore
+except Exception:  # pragma: no cover - mlflow is optional
+    mlflow = None  # type: ignore
+
 
 @dataclass
 class ModelRecord:
@@ -173,6 +178,11 @@ class ModelRegistry:
                 (model_id, ts, ret, sharpe),
             )
             self.conn.commit()
+        if mlflow is not None:
+            if ts is None:
+                mlflow.log_metric(f"pnl_model_{model_id}", ret)
+            else:
+                mlflow.log_metric(f"pnl_model_{model_id}", ret, step=ts)
 
     def log_oos_metrics(
         self,
