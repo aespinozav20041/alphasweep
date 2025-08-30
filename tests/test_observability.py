@@ -1,7 +1,10 @@
 import re
 
-from fastapi.testclient import TestClient
+import pytest
 
+pytest.importorskip("fastapi")
+
+from fastapi.testclient import TestClient
 from quant_pipeline.observability import Observability
 
 

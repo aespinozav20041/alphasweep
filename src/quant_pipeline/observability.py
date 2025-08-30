@@ -10,7 +10,11 @@ from email.message import EmailMessage
 from typing import Optional
 
 import requests
-from fastapi import FastAPI, Response
+try:
+    from fastapi import FastAPI, Response
+except Exception:  # pragma: no cover - fastapi optional
+    FastAPI = None  # type: ignore[assignment]
+    Response = None  # type: ignore[assignment]
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     CollectorRegistry,
@@ -136,14 +140,15 @@ class Observability:
         self.email_from = email_from or os.getenv("ALERT_EMAIL_FROM")
         self.email_to = email_to or os.getenv("ALERT_EMAIL_TO")
 
-        # FastAPI application exposing /metrics
-        self.app = FastAPI()
+        # FastAPI application exposing /metrics (optional)
+        self.app = FastAPI() if FastAPI is not None else None
 
-        @self.app.get("/metrics")
-        def metrics() -> Response:
-            return Response(
-                generate_latest(self.registry), media_type=CONTENT_TYPE_LATEST
-            )
+        if self.app:
+            @self.app.get("/metrics")
+            def metrics() -> "Response":
+                return Response(
+                    generate_latest(self.registry), media_type=CONTENT_TYPE_LATEST
+                )
 
     # ------------------------------------------------------------------
     # Metric helpers
